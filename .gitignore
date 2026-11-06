@@ -1,0 +1,10 @@
+# Local build tools and generated files
+.venv/
+.pio/
+.pio-core/
+work/
+__pycache__/
+*.pyc
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
