@@ -2,6 +2,12 @@
 
 AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情、运动、语音和视觉。
 
+## 项目管理入口
+
+- [协作规则](AGENTS.md)：工作流程、硬件约束、验证与 Git 同步规则。
+- [当前进度与交接](docs/progress.md)：已完成事项、验证证据、未决问题和下一步；后续开发从这里继续。
+- [实验 001 记录](docs/experiments/001-rgb-led.md)：首次 RGB 实验的完整配置、现象和学习要点。
+
 ## 实验 001：板载 RGB LED
 
 开发环境：Ubuntu + VS Code / PlatformIO + Arduino。
