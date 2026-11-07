@@ -10,7 +10,7 @@
 - **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 004。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
 - **实验 003 第二阶段：已验收（SH1106 首次显示）。** U8g2 2.36.17 已加入；默认 SH1106，支持串口切换 SSD1306。最终三环境构建和 GPIO48 烧录校验通过，65 项实机串口检查全部通过；用户已确认 SH1106 画面完整、没有问题；SSD1306 对比画面由用户反馈异常，显示未通过；保留 SH1106 为默认方案。
 - **实验 004 已验收：** 十种持续表情、一次性眨眼、状态查询与 ASCII 帧缓冲调试已实现；默认开机进入 normal 眼睛画面。三环境构建通过，GPIO48 烧录及区域 hash 校验通过；`scripts/test_serial_eyes.py` 的 244 项串口/软件检查全部通过，十种表情帧缓冲哈希互不相同，自动眨眼在命令服务期间正常发生，内部堆与最大区域传输时间稳定。用户于 2026-11-07 按实验 004 第 9 节逐项观察，确认十种表情、手动/自动眨眼与显示均正常，见[实验 004](experiments/004-oled-eyes.md)。
-- **Git 同步：** 用户于 2026-11-07 已确认提交与推送；实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送至 `origin/main`，经远程查询核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
+- **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
 - 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[004-oled-eyes.md](experiments/004-oled-eyes.md)；上一阶段：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
@@ -116,13 +116,13 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 002 验证 | 已验收；没有已知硬件阻塞 | 保留测试和用户观察结果，继续维护当前串口接口 |
 | 实验 002 Git 同步 | 已完成 | 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已推送到 `origin/main` 并核对远程一致 |
 | 实验 004 实物验收 | 已完成 | 2026-11-07 用户确认十种表情、眨眼与显示均正常；后续修改渲染或更换屏幕时需重新观察 |
-| 实验 004 Git 同步 | 提交已获授权 | 实现与验收文档按用户 2026-11-07 指示提交；推送需用户确认后执行，完成后核对远程并单独记录 |
+| 实验 004 Git 同步 | 已完成 | 实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：实验 004 已完成实现、软件验证与用户实物验收，本轮改动提交到本地仓库；推送待用户确认后执行并核对远程。** 设备当前运行实验 004，停留在 normal 眼睛画面、RGB 熄灭。随后从下方长期目标候选中选择下一阶段；若先调整表情渲染，修改后需重新做实物观察。
+**当前下一步：实验 004 已完成实现、软件验证、用户实物验收与 GitHub 同步。** 设备当前运行实验 004，停留在 normal 眼睛画面、RGB 熄灭。随后从下方长期目标候选中选择下一阶段；若先调整表情渲染，修改后需重新做实物观察。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -147,7 +147,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 实验 002 实现与验收：六命令、健壮输入处理、38 项实机检查、Monitor 与用户灯光确认；实验 001 记录保留 | [实验 002](experiments/002-serial-led.md)，实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已获授权并推送 |
 | 2026-11-07 | 实验 003 第一阶段通信验收：Wire 扫描、三环境构建、烧录校验、52 项实机检查，两次 0x3C 应答；权限阻塞已解除 | [实验 003](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 | 2026-11-07 | 实验 003 第二阶段：增加 U8g2 双驱动串口切换和测试图；最终构建、烧录和 65 项串口检查通过，SH1106 用户实物确认通过，SSD1306 用户反馈异常，默认保留 SH1106 | [实验 003 第二阶段](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
-| 2026-11-07 | 实验 004：OLED 表情引擎 V1.0，十种表情、眨眼、状态查询、非阻塞状态机与增量刷新；三环境构建、烧录校验、244 项串口/软件检查通过，用户实物确认十种表情与眨眼均正常 | [实验 004](experiments/004-oled-eyes.md)；实现与验收记录见本提交，远程同步在推送后单独记录 |
+| 2026-11-07 | 实验 004：OLED 表情引擎 V1.0，十种表情、眨眼、状态查询、非阻塞状态机与增量刷新；三环境构建、烧录校验、244 项串口/软件检查通过，用户实物确认十种表情与眨眼均正常 | [实验 004](experiments/004-oled-eyes.md)；实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送并核对一致 |
 
 ## 维护方法
 
