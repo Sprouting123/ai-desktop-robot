@@ -164,7 +164,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 006 双舵机供电 | 未测量 | 两只共用 5V 5A 电源；同时动作与堵转电流、电压跌落未测，异常发热立即断开外部 5V |
 | 实验 006 第二阶段 | 已验收 | 2026-11-07 用户接通外部 5V，确认四个动作、运动中 `motion stop`、四个 mood 和 `mood stop` 均正常；软件侧另有 893 项串口/软件检查与 2 分钟连续运行证据；未做定量测量 |
 | 实验 006 动作中 `servo both stop` | 软件已验证，实物未补测 | 第一阶段因动作过快未复现；第二阶段约 20 秒的 `motion wiggle` 可补测，但用户尚未执行；不影响 `motion stop` 已获实物确认 |
-| 实验 006 Git 同步 | 已完成 | 用户授权后，实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已推送至 `origin/main`；`git fetch` 后核对本地与远程 commit 一致 |
+| 实验 006 Git 同步 | 已完成 | 第一阶段的实现与验收提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d)、第二阶段的实现与验收提交 [cc9d642](https://github.com/Sprouting123/ai-desktop-robot/commit/cc9d642b9c0e6f273aca30947a9648985d465467) 均已推送至 `origin/main`；`git ls-remote` 核对远程与本地 commit 一致 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
@@ -198,7 +198,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 实验 004：OLED 表情引擎 V1.0，十种表情、眨眼、状态查询、非阻塞状态机与增量刷新；三环境构建、烧录校验、244 项串口/软件检查通过，用户实物确认十种表情与眨眼均正常 | [实验 004](experiments/004-oled-eyes.md)；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送并核对一致 |
 | 2026-11-07 | 实验 005：SG90 单舵机控制，GPIO4、50Hz LEDC（S3 14 位）、60–120° 软件限位、非阻塞渐进运动与 `servo stop` 放松策略；三环境构建、烧录校验、348 项串口/软件检查及 2 分钟连续运行通过；用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，记为已验收 | [实验 005](experiments/005-servo.md)；实现与验收提交 [f33dd0e](https://github.com/Sprouting123/ai-desktop-robot/commit/f33dd0ef6494d93271a6fd85a918069d772c8a7c) 已推送并核对一致 |
 | 2026-11-07 | 实验 006 第一阶段：两个 `servo::Controller` 实例（GPIO4/通道 0、GPIO5/通道 1），保留旧 `servo` 命令并新增 `servo1`/`servo2`/`servo both`；三环境构建、烧录校验、557 项串口/软件检查及 2 分钟连续运行通过；用户确认两只单独测试和双舵机同时运动正常，运动中 `servo both stop` 未实物复现 | [实验 006](experiments/006-dual-servo.md)；实现与验收提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已推送并核对一致 |
-| 2026-11-07 | 实验 006 第二阶段：`motion` 非阻塞动作序列与 `mood` 表情联动，含中途停止、切换、手动接管、非法命令保护；三环境构建、烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；用户接通外部 5V 逐项确认动作、停止、mood 与 `mood stop` 正常，记为已验收 | [实验 006](experiments/006-dual-servo.md)；实现与验收提交在授权后推送，提交号由后续同步记录补充 |
+| 2026-11-07 | 实验 006 第二阶段：`motion` 非阻塞动作序列与 `mood` 表情联动，含中途停止、切换、手动接管、非法命令保护；三环境构建、烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；用户接通外部 5V 逐项确认动作、停止、mood 与 `mood stop` 正常，记为已验收 | [实验 006](experiments/006-dual-servo.md)；实现与验收提交 [cc9d642](https://github.com/Sprouting123/ai-desktop-robot/commit/cc9d642b9c0e6f273aca30947a9648985d465467) 已推送并核对一致 |
 
 ## 维护方法
 
