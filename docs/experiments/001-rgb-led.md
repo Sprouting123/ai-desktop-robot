@@ -4,7 +4,8 @@
 - 项目：`/home/hy/ai-desktop-robot`
 - 结果：**构建通过、烧录与写入校验通过、运行日志通过；用户确认红 → 绿 → 蓝每秒循环正常。**
 - 最终环境：`rgb_gpio48`，默认构建及烧录环境。
-- 身份边界：芯片、内存与可用 RGB 引脚已验证；开发板厂家、完整 PCB 型号/版本及模组完整丝印仍未确认，不能称其为已识别的官方 DevKitC-1 某一版。
+- 照片补充：2026-11-07 用户提供开发板正反面照片，已确认可见标识 `S3-N16R8`、`ESP32-S3` 及双 USB-C 接口 `COM` / `USB`。
+- 身份边界：芯片、内存与可用 RGB 引脚已验证，照片上的主要标识已核对；厂家、完整 PCB 型号/版本及正式模组型号仍未确认，不能称其为已识别的官方 DevKitC-1 某一版。
 
 ## 1. 初始项目与原有程序
 
@@ -18,8 +19,8 @@
 
 | 项目 | 实测或来源 |
 | --- | --- |
-| 用户提供的型号 | ESP32-S3-N16R8，双 USB-C（COM / USB） |
-| 厂家、PCB 版本、模组完整丝印 | 未确认；读取到的前序会话中未包含原始板卡照片 |
+| 照片可见型号标识 | 正面屏蔽罩 `S3-N16R8`，背面 PCB `ESP32-S3`；双 USB-C，背面分别标记 `COM` / `USB` |
+| 厂家、PCB 版本、正式模组型号 | 正反面照片未提供足以确认这些项目的清晰标识；不能将 `S3-N16R8` 直接写成 `ESP32-S3-WROOM-1` 或指定官方 PCB 版本 |
 | 接线 | 用户确认：只连接 USB，无 GPIO 外设 |
 | 芯片 | esptool：`ESP32-S3 (QFN56) (revision v0.2)`；40 MHz 晶振 |
 | Flash | esptool：`Detected flash size: 16MB`，JEDEC manufacturer `c8` / device `4018`；eFuse 显示 quad、3.3 V；程序报告 16777216 字节 |
@@ -31,6 +32,19 @@
 | 最终 RGB 引脚 | **GPIO48**：直接读到原板脚本使用此脚位；Arduino 烧录后用户确认实际灯光正确 |
 
 乐鑫官方 ESP32-S3-DevKitC-1 初版 RGB 接 GPIO48，v1.1 接 GPIO38。该资料解释了为什么不能仅凭“N16R8”决定灯引脚；本板最终选择 GPIO48 的证据来自实物已有脚本与实际运行，并不能据此断言本板就是官方初版。
+
+### 2.1 照片补充核对（2026-11-07）
+
+用户在本会话补充了同一块开发板的正面和背面照片，可直接观察到：
+
+- 正面金属屏蔽罩印有 `S3-N16R8`、`WIFI+BT`；其 N16R8 标识与实验读取的 16 MB Flash、8 MB PSRAM 一致。
+- 正面有 `RST`、`BOOT` 两个按键；方形彩灯旁标有 `RGB`。
+- 背面 PCB 印有 `ESP32-S3`；两个 USB-C 接口旁分别印有 `COM` 和 `USB`，另有 `USB_OTG` 标记。识别接口以丝印为准，正反面照片的左右位置会翻转。
+- 照片未能确认厂家、PCB 修订版本或完整的正式模组型号。项目中使用描述“ESP32-S3 / S3-N16R8 双 USB-C 开发板”，不强行归为官方 DevKitC-1 的某一版。
+
+**GPIO48 的结论仍来自此前读取到的板载脚本及 Arduino 实物灯光验收。** 照片上的 `RGB` 标记本身没有给出数据引脚编号，不能用它单独判定 GPIO48 或 GPIO38。照片与已验证配置没有发现矛盾，继续使用 `rgb_gpio48`。
+
+本节记录的是用户所传照片的可见信息；原图在会话中，尚未作为图片文件保存进仓库。
 
 ## 3. 可复现配置
 
@@ -157,4 +171,5 @@ sudo setfacl -m u:hy:rw /dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-
 - [PlatformIO VS Code 自定义 CLI 配置](https://docs.platformio.org/en/latest/integration/ide/vscode.html)
 - [MicroPython 控制台与 Ctrl-C](https://docs.micropython.org/en/latest/reference/repl.html)
 - [Adafruit NeoPixel 1.15.5 源码](https://github.com/adafruit/Adafruit_NeoPixel/tree/1.15.5)
-- 实物引脚依据：本板原有 `main.py` 的只读串口输出及用户灯光观察，而非网络相似板卡照片。
+- 外观标识依据：用户于 2026-11-07 在本会话提供的开发板正反面原始照片，见第 2.1 节。
+- 实物引脚依据：本板原有 `main.py` 的只读串口输出及用户灯光观察；正反面照片不单独证明 RGB 数据引脚。
