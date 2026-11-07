@@ -20,27 +20,36 @@ struct Config {
   uint16_t stepIntervalMs;
 };
 
-constexpr Config kDefaultConfig = {
-    4,    // signal pin reported by the user; not yet physically verified
-    0,    // LEDC channel, separate from the RGB (RMT) and OLED (I2C) paths
-    50,   // SG90 refresh rate
-    14,   // ESP32-S3 LEDC maximum; pulse resolution is about 1.2 us at 50 Hz
-    600,  // conservative full-range pulse limits for a 180 degree SG90
-    2400,
-    60,   // software travel limits used by the servo commands
-    120,
-    90,   // neutral / power-on reference
-    60,   // degrees per second while moving
-    20,   // update one small step every 20 ms
-};
+constexpr Config makeConfig(uint8_t pin, uint8_t ledcChannel) {
+  return Config{
+      pin,
+      ledcChannel,  // separate from the RGB (RMT) and OLED (I2C) paths
+      50,           // SG90 refresh rate
+      14,           // ESP32-S3 LEDC maximum; about 1.2 us pulse resolution
+      600,          // conservative full-range pulse limits for a 180 degree SG90
+      2400,
+      60,   // software travel limits used by the servo commands
+      120,
+      90,   // neutral / power-on reference
+      60,   // degrees per second while moving
+      20,   // update one small step every 20 ms
+  };
+}
+
+// Servo 1 keeps the experiment 005 wiring and channel.
+constexpr Config kDefaultConfig = makeConfig(4, 0);
+// Servo 2 uses GPIO5 and LEDC channel 1. On ESP32-S3 channels 0 and 1 share
+// timer 0; both run at 50 Hz / 14 bit, so the shared timer stays consistent.
+constexpr Config kServo2Config = makeConfig(5, 1);
 
 class Controller {
  public:
   explicit Controller(const Config& config = kDefaultConfig) : config_(config) {}
 
   // Configures LEDC but deliberately leaves the output at zero duty. No pulse
-  // is generated until the first setAngle()/center() command.
-  bool begin();
+  // is generated until the first setAngle()/center() command. The label keeps
+  // the two instances distinguishable in the boot log (SERVO1_INIT, ...).
+  bool begin(const char* label = "SERVO");
   bool setAngle(int angle);
   bool center() { return setAngle(config_.centerAngle); }
   void stop();  // Cancel the schedule and remove pulses (servo relaxed).
@@ -58,8 +67,10 @@ class Controller {
   bool moving() const { return moving_; }
   bool outputEnabled() const { return outputEnabled_; }
   bool ready() const { return ready_; }
+  uint8_t pin() const { return config_.pin; }
+  uint8_t channel() const { return config_.ledcChannel; }
   const char* state() const;
-  void printStatus() const;
+  void printStatus(const char* label = "SERVO") const;
 
  private:
   void writeCurrentAngle();

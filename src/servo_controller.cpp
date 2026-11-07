@@ -5,7 +5,7 @@ namespace {
 constexpr int kFullRangeTenths = 1800;  // 180.0 degrees in 0.1 degree units.
 }
 
-bool Controller::begin() {
+bool Controller::begin(const char* label) {
   actualFrequencyHz_ =
       ledcSetup(config_.ledcChannel, config_.frequencyHz, config_.resolutionBits);
   if (actualFrequencyHz_ == 0) {
@@ -13,8 +13,9 @@ bool Controller::begin() {
     outputEnabled_ = false;
     moving_ = false;
     Serial.printf(
-        "SERVO_INIT ready=0 pin=%u channel=%u requested_hz=%u actual_hz=0 "
+        "%s_INIT ready=0 pin=%u channel=%u requested_hz=%u actual_hz=0 "
         "resolution_bits=%u output=off\n",
+        label,
         static_cast<unsigned>(config_.pin),
         static_cast<unsigned>(config_.ledcChannel),
         static_cast<unsigned>(config_.frequencyHz),
@@ -41,9 +42,10 @@ bool Controller::begin() {
   stepTenths_ = static_cast<uint16_t>(step);
 
   Serial.printf(
-      "SERVO_INIT ready=1 pin=%u channel=%u requested_hz=%u actual_hz=%lu "
+      "%s_INIT ready=1 pin=%u channel=%u requested_hz=%u actual_hz=%lu "
       "resolution_bits=%u output=off center=%d range=%d-%d pulse_us=%u-%u "
       "speed_dps=%u step_ms=%u\n",
+      label,
       static_cast<unsigned>(config_.pin),
       static_cast<unsigned>(config_.ledcChannel),
       static_cast<unsigned>(config_.frequencyHz),
@@ -134,17 +136,18 @@ const char* Controller::state() const {
   return "stopped";
 }
 
-void Controller::printStatus() const {
+void Controller::printStatus(const char* label) const {
   Serial.printf(
-      "SERVO state=%s ready=%u angle=%d target=%d pulse_us=%u output=%s "
-      "pin=%u frequency_hz=%lu min=%d max=%d speed_dps=%u\n",
-      state(), ready_ ? 1U : 0U, angle(), target(),
+      "%s state=%s ready=%u angle=%d target=%d pulse_us=%u output=%s "
+      "pin=%u frequency_hz=%lu min=%d max=%d speed_dps=%u channel=%u\n",
+      label, state(), ready_ ? 1U : 0U, angle(), target(),
       outputEnabled_ ? pulseUsForTenths(currentTenths_) : 0,
       outputEnabled_ ? "on" : "off",
       static_cast<unsigned>(config_.pin),
       static_cast<unsigned long>(actualFrequencyHz_),
       config_.minAngle, config_.maxAngle,
-      static_cast<unsigned>(config_.speedDegPerSec));
+      static_cast<unsigned>(config_.speedDegPerSec),
+      static_cast<unsigned>(config_.ledcChannel));
 }
 
 }  // namespace servo

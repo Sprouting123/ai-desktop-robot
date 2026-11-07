@@ -28,7 +28,8 @@ constexpr uint8_t kOledAddress = 0x3C;
 U8G2_SH1106_128X64_NONAME_F_HW_I2C sh1106(U8G2_R0, U8X8_PIN_NONE);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C ssd1306(U8G2_R0, U8X8_PIN_NONE);
 eyes::Engine eyesEngine(sh1106);
-servo::Controller servoController(servo::kDefaultConfig);
+servo::Controller servo1Controller(servo::kDefaultConfig);
+servo::Controller servo2Controller(servo::kServo2Config);
 const char* oledDriver = "none";
 bool oledDrawCalled = false;
 bool eyesVisible = false;
@@ -71,7 +72,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -241,27 +242,30 @@ void executeEyes(char* args) {
   Serial.printf("OK expression=%s\n", eyes::name(type));
 }
 
-void executeServo(char* args) {
+// Shared command body for the legacy `servo` form (servo 1) and the explicit
+// servo1/servo2 forms. name is used in OK lines, statusLabel in status output.
+void executeServo(servo::Controller& controller, const char* name,
+                  const char* statusLabel, char* args) {
   if (*args == '\0') {
     Serial.println("ERR servo_usage; use help");
     return;
   }
   if (std::strcmp(args, "status") == 0) {
-    servoController.printStatus();
+    controller.printStatus(statusLabel);
     return;
   }
   if (std::strcmp(args, "stop") == 0) {
     // Explicit safe state: cancel movement and stop generating pulses.
-    servoController.stop();
-    Serial.println("OK servo=stopped output=off");
+    controller.stop();
+    Serial.printf("OK %s=stopped output=off\n", name);
     return;
   }
   if (std::strcmp(args, "center") == 0) {
-    if (!servoController.center()) {
+    if (!controller.center()) {
       Serial.println("ERR servo_not_ready");
       return;
     }
-    Serial.printf("OK servo=center angle=%d\n", servoController.centerAngle());
+    Serial.printf("OK %s=center angle=%d\n", name, controller.centerAngle());
     return;
   }
 
@@ -274,16 +278,40 @@ void executeServo(char* args) {
     return;
   }
   const int angle = static_cast<int>(value);
-  if (!servoController.validAngle(angle)) {
+  if (!controller.validAngle(angle)) {
     Serial.printf("ERR servo_range min=%d max=%d\n",
-                  servoController.minAngle(), servoController.maxAngle());
+                  controller.minAngle(), controller.maxAngle());
     return;
   }
-  if (!servoController.setAngle(angle)) {
+  if (!controller.setAngle(angle)) {
     Serial.println("ERR servo_not_ready");
     return;
   }
-  Serial.printf("OK servo=target angle=%d\n", angle);
+  Serial.printf("OK %s=target angle=%d\n", name, angle);
+}
+
+void executeServoBoth(char* action) {
+  if (std::strcmp(action, "center") == 0) {
+    // Check both first so a failed controller cannot leave a half-applied
+    // command; both share the same configuration and boot readiness.
+    if (!servo1Controller.ready() || !servo2Controller.ready()) {
+      Serial.println("ERR servo_not_ready");
+      return;
+    }
+    servo1Controller.center();
+    servo2Controller.center();
+    Serial.printf("OK servo1=center angle=%d\n", servo1Controller.centerAngle());
+    Serial.printf("OK servo2=center angle=%d\n", servo2Controller.centerAngle());
+    return;
+  }
+  if (std::strcmp(action, "stop") == 0) {
+    servo1Controller.stop();
+    servo2Controller.stop();
+    Serial.println("OK servo1=stopped output=off");
+    Serial.println("OK servo2=stopped output=off");
+    return;
+  }
+  Serial.println("ERR servo_usage; use help");
 }
 
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
@@ -317,11 +345,29 @@ void executeCommand() {
     char* args = text + 4;
     while (isPadding(*args)) ++args;
     executeEyes(args);
+  } else if (std::strncmp(text, "servo1", 6) == 0 &&
+             (text[6] == '\0' || isPadding(text[6]))) {
+    char* args = text + 6;
+    while (isPadding(*args)) ++args;
+    executeServo(servo1Controller, "servo1", "SERVO1", args);
+  } else if (std::strncmp(text, "servo2", 6) == 0 &&
+             (text[6] == '\0' || isPadding(text[6]))) {
+    char* args = text + 6;
+    while (isPadding(*args)) ++args;
+    executeServo(servo2Controller, "servo2", "SERVO2", args);
   } else if (std::strncmp(text, "servo", 5) == 0 &&
              (text[5] == '\0' || isPadding(text[5]))) {
     char* args = text + 5;
     while (isPadding(*args)) ++args;
-    executeServo(args);
+    if (std::strncmp(args, "both", 4) == 0 &&
+        (args[4] == '\0' || isPadding(args[4]))) {
+      char* action = args + 4;
+      while (isPadding(*action)) ++action;
+      executeServoBoth(action);
+    } else {
+      // Legacy `servo ...` keeps its experiment 005 meaning: servo 1.
+      executeServo(servo1Controller, "servo", "SERVO", args);
+    }
   } else {
     for (const Color& color : kColors) {
       if (std::strcmp(text, color.name) == 0) {
@@ -379,16 +425,17 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 005] OLED eyes + SG90 servo / Arduino");
+  Serial.println("\n[experiment 006] OLED eyes + dual SG90 servo / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
                 i2cReady ? 1U : 0U, kI2cSda, kI2cScl,
                 static_cast<unsigned long>(kI2cFrequency), kI2cTimeoutMs);
   printHardware();
-  // No pulses until an explicit servo command. The first flash of experiment
-  // 005 therefore cannot start an automatic servo sweep.
-  servoController.begin();
+  // No pulses on either channel until an explicit servo command, so boot and
+  // the first flash of experiment 006 cannot start an automatic sweep.
+  servo1Controller.begin("SERVO1");
+  servo2Controller.begin("SERVO2");
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -403,6 +450,9 @@ void loop() {
   }
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
-  // One small servo step at most; the 20 ms schedule is independent of OLED I/O.
-  servoController.update();
+  // One small step per servo at most; their 20 ms schedules are independent of
+  // OLED I/O and of each other. Channels 0 and 1 share timer 0 by design, but
+  // each controller owns its angle, target and movement state.
+  servo1Controller.update();
+  servo2Controller.update();
 }

@@ -30,24 +30,25 @@
 - 串口临时 ACL 权限在重新插拔后可能失效；遇到拒绝访问时检查实际权限。需要管理员密码时让用户在本机终端输入，不索取密码，不扩大到所有串口的权限。
 - 首个实验只连接 USB。新增模块前先确认其型号、供电、接线与所占 GPIO，再修改代码和连接硬件。
 - `ESP.getPsramSize()` 是堆容量，略小于物理 8 MB；容量校验应区分物理容量与分配器开销，参照当前程序实现。
-- ESP32-S3 的 LEDC 最大分辨率为 14 位；50Hz 舵机 PWM 不能沿用经典 ESP32 的 16/20 位配置。实验 005 使用 14 位，实测 `actual_hz=50`。
+- ESP32-S3 的 LEDC 最大分辨率为 14 位；50Hz 舵机 PWM 不能沿用经典 ESP32 的 16/20 位配置。实验 005 使用 14 位，实测 `actual_hz=50`。Arduino-ESP32 2.0.17 中通道 0/1 共用定时器 0（`timer = (channel / 2) % 4`），同组通道必须使用相同频率和分辨率；实验 006 的两只舵机均为 50Hz/14 位，因此可以分别使用通道 0 和 1。
 
-## 当前固件接口（实验 005）
+## 当前固件接口（实验 006）
 
 - 当前 `src/main.cpp` 保留[串口命令实验 002](docs/experiments/002-serial-led.md)，上电 `off`，按 `red` / `green` / `blue` / `off` 改变并保持状态；`status` 和 `help` 不改变灯光。不再自动循环。
 - `i2cscan` 使用 Wire、SDA GPIO8 / SCL GPIO9、100kHz，扫描 0x08–0x77；每次事务超时 25ms。扫描为同步命令，期间暂不处理新串口命令，不改变 RGB 状态；应答地址不能证明 OLED 型号或显示效果。详见[实验 003](docs/experiments/003-i2c-scan.md)。
 - OLED 使用 U8g2 2.36.17；上电默认 SH1106 128×64 并直接进入眼睛画面。`oled_sh1106` / `oled_ssd1306` 仍可切换测试图，`oled_status` 查询当前驱动与画面类型（`screen=eyes|test`）。复位恢复 SH1106 与 normal 表情，不持久化选择；`off` 仅关闭 RGB。地址保持 0x3C，硬件 I²C 保持 100kHz。日志中的绘图调用和 ACK 不代表光学验收或型号鉴定。
 - 实验 004 新增 `eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right>`、`eyes blink`、`eyes status`，以及仅用于软件调试的 `eyes dump`（输出 64×32 ASCII 帧缓冲，不发 I²C，约阻塞串口 0.2s）。表情引擎用 `millis()` 非阻塞状态机，自动眨眼 3–5s（悲伤/安慰/忧郁/尴尬更慢），闭眼保持 200ms；只在画面变化时重绘，并按 32 字节区域增量传输，每轮 `loop()` 最多传输一个区域，串口命令始终优先处理。详见[实验 004](docs/experiments/004-oled-eyes.md)。
-- 实验 005 新增单只 SG90 控制：信号 GPIO4、LEDC 通道 0、50Hz、ESP32-S3 最大 14 位分辨率；软件限位 60–120°，脉宽 600–2400µs（90° 为 1500µs），中位 90°，60°/s、20ms 步进。参数集中在 `src/servo_controller.h`。开机只配置 LEDC 并写 0 占空比，不输出脉冲；`servo center`/`servo <60-120>` 才使能输出。`servo stop` 取消调度并关闭脉冲，舵机放松；重新使能时从最后已知角度渐进到新目标。详见[实验 005](docs/experiments/005-servo.md)。
-- SG90 供电必须使用外部 5V：红线接外部正极、棕线接外部负极、信号接 GPIO4，ESP32 GND 与外部电源负极共地；禁止把外部 5V 接到 3V3 或任何 GPIO。首次测试不安装摇臂；开发、烧录和自动串口测试期间保持外部 5V 断开；实物运动必须由用户上电观察确认。2026-11-07 用户已确认 60–120° 运动、运动中 `servo stop` 与恢复、OLED 并行均正常；实际角度、方向标定、电流和带载情况未测量。
+- 实验 005 新增、实验 006 扩展为两只独立的 SG90：舵机 1 信号 GPIO4 / LEDC 通道 0，舵机 2 信号 GPIO5 / LEDC 通道 1，均 50Hz、ESP32-S3 最大 14 位分辨率；软件限位 60–120°，脉宽 600–2400µs（90° 为 1500µs），中位 90°，60°/s、20ms 步进。参数集中在 `src/servo_controller.h`（`makeConfig()`、`kDefaultConfig`、`kServo2Config`），两个 `servo::Controller` 实例各自保存角度、目标、运动与停止状态。开机只配置 LEDC 并写 0 占空比，不输出脉冲；显式命令才使能输出。`servo stop` 只停止对应舵机并关闭其脉冲，另一只不受影响；重新使能时从最后已知角度渐进到新目标。详见[实验 006](docs/experiments/006-dual-servo.md)。
+- 舵机命令：旧 `servo center`、`servo <60-120>`、`servo status`、`servo stop` 保持实验 005 含义，仍指舵机 1，回复文本不变；`servo1 ...`、`servo2 ...` 分别控制对应通道；`servo both center`、`servo both stop` 同时作用于两只。状态行以 `SERVO`/`SERVO1`/`SERVO2` 开头并带 `channel=`。`servo both` 只接受 `center` 和 `stop`，执行前先检查两个实例都就绪。
+- SG90 供电必须使用外部 5V：红线接外部正极、棕线接外部负极、信号接对应 GPIO（1 → GPIO4、2 → GPIO5），ESP32 GND 与外部电源负极共地；禁止把外部 5V 接到 3V3 或任何 GPIO。首次测试不安装摇臂；开发、烧录和自动串口测试期间保持外部 5V 断开；实物运动必须由用户上电观察确认。2026-11-07 用户已先后确认舵机 1、舵机 2 单独测试和双舵机同时运动正常，`servo both center` 的实物效果也正常；运动中 `servo both stop` 因 60°/s 动作过快未能人工复现，只有软件检查证据。双舵机供电余量、实际角度、方向标定、电流和带载情况未测量。
 - 眼睛画面固定使用已验收的 SH1106 路径；从 SSD1306 测试图返回时重新初始化 SH1106。十种表情命令会重置当前表情的动画计时；`eyes blink` 在眨眼进行中返回 `started=0`，不排队。
 - OLED 用户报告接线：VCC → 3V3、GND → GND、SDA → GPIO8、SCL → GPIO9；控制器和分辨率待确认。
 - 接收使用固定 32 字符缓冲，每轮最多读取 64 个已到达字节；支持 CR、LF、CRLF、首尾空白和大小写。过长或非法的一整行必须丢弃，到换行后再恢复，不能执行截断前缀或后缀。
 - `status` 表示最后命令状态，不代表光学测量。串口 ACK 与用户灯光验收分别记录。
 - 监视器已配置 `monitor_echo=yes`、`monitor_eol=LF` 和 `send_on_enter`，在终端直接输入英文命令并按回车发送。
-- 实机回归脚本为 `.venv/bin/python scripts/test_serial_servo.py`；先关闭其他监视器并保持舵机外部 5V 断开。脚本核对设备身份，会复位、回归实验 002/003/004 全部命令、检查十种表情与 ASCII 帧缓冲差异、眨眼/快速切换/自动眨眼、舵机解析/限位/渐进运动/停止恢复与堆稳定性，最后关闭舵机输出、RGB 熄灯、恢复 SH1106 眼睛画面并关闭串口。`scripts/test_serial_eyes.py` 仅对应实验 004 固件，`scripts/test_serial_led.py` 仅对应实验 003 固件，均保留为历史记录。
+- 实机回归脚本为 `.venv/bin/python scripts/test_serial_dual_servo.py`；先关闭其他监视器并保持舵机外部 5V 断开，舵机 2 未接线也可运行。脚本核对设备身份，会复位、回归实验 002/003/004 全部命令、检查十种表情与 ASCII 帧缓冲差异、眨眼/快速切换/自动眨眼、双通道启动状态、旧命令兼容、两只舵机的解析/限位/渐进运动/独立停止/`servo both` 与堆稳定性，最后关闭两只舵机输出、RGB 熄灯、恢复 SH1106 眼睛画面并关闭串口。`scripts/test_serial_servo.py` 仅对应实验 005 固件，`scripts/test_serial_eyes.py` 仅对应实验 004 固件，`scripts/test_serial_led.py` 仅对应实验 003 固件，均保留为历史记录。
 - `diagnostics` 仍不驱动 LED，颜色命令返回 `ERR led_disabled`；`rgb_gpio38` 仍仅为其他版本的备选。本板保持 `rgb_gpio48`。
-- 实验 001–004 文档是历史验收记录，后续程序进入新实验时保留该记录；旧固件实现通过对应 Git 历史查阅。
+- 实验 001–005 文档是历史验收记录，后续程序进入新实验时保留该记录；旧固件实现通过对应 Git 历史查阅。
 
 ## 工程与验证方法
 
