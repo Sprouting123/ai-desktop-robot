@@ -1,4 +1,9 @@
-"""Live RGB regression check for experiment 003. Resets this board; leaves LED off.
+"""Live RGB regression check for the experiment 003 firmware (historical).
+
+The current experiment 004 firmware uses scripts/test_serial_eyes.py, which
+includes these checks with updated boot/help and OLED expectations. This file
+is kept as the experiment 003 acceptance record and will not match newer boot
+or help text.
 
 Run with .venv/bin/python scripts/test_serial_led.py after closing all monitors.
 It checks UART responses and recovery, not the physical LED color.
