@@ -1,12 +1,14 @@
-"""Live regression check for experiment 004 (OLED eyes V1.0).
+"""Live regression check for the experiment 004 firmware (historical).
+
+The current experiment 005 firmware uses scripts/test_serial_servo.py, which
+includes these checks with updated boot/help and servo expectations. This file
+is kept as the experiment 004 acceptance record and will not match newer boot
+or help text.
 
 Run with .venv/bin/python scripts/test_serial_eyes.py after closing all monitors.
-Covers the experiment 002/003 commands plus the new eye expressions, blink,
-status and ASCII framebuffer dump. It resets this board and leaves the RGB LED
-off with the normal eye screen showing.
-
-Every check here is a software/serial observation; it cannot prove what the
-physical OLED looks like.
+It resets this board and leaves the RGB LED off with the normal eye screen
+showing. Every check here is a software/serial observation; it cannot prove
+what the physical OLED looks like.
 """
 
 import argparse

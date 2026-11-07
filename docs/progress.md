@@ -7,13 +7,14 @@
 - **实验 001 已验收：** GPIO48 板载 RGB LED 红 → 绿 → 蓝循环，每色约 1 秒；构建、烧录校验、串口和用户实物观察均有记录。
 - **管理机制已建立：** 规则、进度和交接入口已提交为 `93c9ce6`；继续随项目状态维护。
 - **实验 002 已验收：** 六个串口命令已实现、构建与烧录通过、38 项实机串口检查通过；用户在 VS Code Monitor 中确认红绿蓝保持且 off 熄灯。实验 002 验收时设备启动为 off，不再自动循环。
-- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 004。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
+- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 005。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
 - **实验 003 第二阶段：已验收（SH1106 首次显示）。** U8g2 2.36.17 已加入；默认 SH1106，支持串口切换 SSD1306。最终三环境构建和 GPIO48 烧录校验通过，65 项实机串口检查全部通过；用户已确认 SH1106 画面完整、没有问题；SSD1306 对比画面由用户反馈异常，显示未通过；保留 SH1106 为默认方案。
 - **实验 004 已验收：** 十种持续表情、一次性眨眼、状态查询与 ASCII 帧缓冲调试已实现；默认开机进入 normal 眼睛画面。三环境构建通过，GPIO48 烧录及区域 hash 校验通过；`scripts/test_serial_eyes.py` 的 244 项串口/软件检查全部通过，十种表情帧缓冲哈希互不相同，自动眨眼在命令服务期间正常发生，内部堆与最大区域传输时间稳定。用户于 2026-11-07 按实验 004 第 9 节逐项观察，确认十种表情、手动/自动眨眼与显示均正常，见[实验 004](experiments/004-oled-eyes.md)。
+- **实验 005 已验收：** SG90 单舵机控制已实现：GPIO4、50Hz LEDC、14 位分辨率、软件限位 60–120°、默认输出关闭、非阻塞渐进运动和 `servo stop` 放松策略。三环境构建、GPIO48 烧录校验和 `scripts/test_serial_servo.py` 的 348 项串口/软件检查通过，2 分钟连续运行无失败、无复位、堆稳定。2026-11-07 用户上电完成第 8 节观察，反馈 `servo center`/`75`/`105`/`120`/`60`、运动中 `servo stop` 与恢复、OLED 并行运行全部正常，见[实验 005](experiments/005-servo.md)。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
-- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[004-oled-eyes.md](experiments/004-oled-eyes.md)；上一阶段：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
+- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[005-servo.md](experiments/005-servo.md)；上一阶段：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
 
 ## 长期目标与协作方式
 
@@ -34,6 +35,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 003：I²C 扫描 | 已验收 | 三环境构建、GPIO48 烧录与校验、52 项串口检查通过，两次扫描均为 0x3C；见实验 003 |
 | OLED 显示阶段 | 已验收 | 最终构建、烧录及 65 项串口检查通过；SH1106 用户确认完整正常，SSD1306 用户反馈异常，不采用为默认方案 |
 | 实验 004：OLED 表情引擎 | 已验收 | 三环境构建、GPIO48 烧录校验、244 项串口/软件检查通过；十种表情哈希不同、眨眼与自动眨眼、堆稳定；2026-11-07 用户实物确认十种表情、眨眼与显示均正常，见[实验 004](experiments/004-oled-eyes.md) |
+| 实验 005：SG90 单舵机 | 已验收 | 三环境构建、GPIO48 烧录校验、348 项串口/软件检查通过；2 分钟连续运行无失败、堆稳定；2026-11-07 用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，见[实验 005](experiments/005-servo.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
 
@@ -44,15 +46,16 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 板卡外观 | 屏蔽罩 `S3-N16R8`、背面 `ESP32-S3`，双 USB-C：`COM` / `USB` |
 | 芯片与内存 | ESP32-S3 revision v0.2；16 MB Flash、8 MB 物理 PSRAM，均已读取 |
 | RGB | GPIO48；依据原板 MicroPython 脚本和 Arduino 实物验收 |
-| PlatformIO 环境 | 默认 `rgb_gpio48`；实验 003 三个环境构建通过，仅 GPIO48 烧录及串口验证，见实验 003 |
+| PlatformIO 环境 | 默认 `rgb_gpio48`；实验 005 三个环境构建通过，仅 GPIO48 烧录及串口验证，见实验 005 |
 | 内存配置 | QIO Flash、OPI PSRAM，`qio_opi`，`default_16MB.csv` |
 | 开发依赖 | Core 6.2.0；Espressif32 6.12.0；Arduino 2.0.17；NeoPixel 1.15.5；第二阶段新增 U8g2 2.36.17，详见配置文件 |
 | 烧录及串口 | COM 口 USB 串口桥、UART0、115200 baud，USB CDC on boot 关闭 |
 | 设备标识 | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00`；实验时为 `/dev/ttyACM1` |
 | 摄像头 | 实验时 `/dev/ttyACM0` 对应 4K USB 摄像头，不能据编号把它用于烧录 |
 | 最新已确认接线 | 用户报告：USB 供电；OLED VCC → 3V3、GND → GND、SDA → GPIO8、SCL → GPIO9；Wire 100kHz |
+| SG90 舵机（用户报告） | 180° SG90；信号 → GPIO4；红线 → 外部 5V 正极；棕线 → 外部电源负极；ESP32 GND 共地；外部电源标称 5V 5A。2026-11-07 实物运动与停止/恢复经用户确认正常；未做电流或角度测量 |
 
-用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
+用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 按用户报告接到 GPIO4 和外部 5V，实验 005 的软件验证与 2026-11-07 实物运动验收均已通过；其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
 
 ## 实验 001 的验证摘要
 
@@ -103,6 +106,20 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - 实机原始日志位于 `work/004-build.log`、`work/004-upload.log`、`work/004-upload-final.log`、`work/004-serial-test.log`、`work/004-serial-test-final.log`、`work/004-preview.log`、`work/004-soak.log`，被 Git 忽略，未归档入库。
 - 用户于 2026-11-07 按实验 004 第 9 节观察十种表情、手动/自动眨眼与驱动切换，确认均正常，未报告错位、裁切或明显闪烁；实验 004 记为已验收。
 
+## 实验 005 的验证摘要
+
+- 新增 `src/servo_controller.*`，参数集中在 `servo::Config`：GPIO4、LEDC 通道 0、50Hz、14 位、脉宽 600–2400µs、软件限位 60–120°、中位 90°、60°/s、20ms 步进。
+- 开机只配置 LEDC 并写 0 占空比，`servo status` 为 `stopped`/`output=off`，不会自动扫动；首次 `servo center` 或角度命令才使能输出。
+- `servo center`、`servo 60`–`servo 120`、`servo status`、`servo stop` 已实现；`servo stop` 取消调度并把占空比写 0，舵机放松。原 RGB、I²C、OLED 测试图、十种表情、眨眼和输入保护保持不变。
+- 首版使用 16 位 LEDC，启动日志报 S3 最大 14 位、`SERVO_INIT ready=0`；改为 14 位后 `actual_hz=50`、`ready=1`。该问题在烧录后由启动日志发现，未发生舵机运动。
+- 最终三环境构建成功；`rgb_gpio48`/`rgb_gpio38` Flash 327349 字节、RAM 22204 字节，`diagnostics` Flash 323981 字节、RAM 22148 字节。GPIO48 重新烧录约 21.4 秒，各区域 hash 校验通过。
+- `scripts/test_serial_servo.py` 的 348 项检查全部通过：原实验 002/003/004 回归、舵机启动安全状态、解析与限位、60/75/90/105/120° 脉宽映射、渐进运动、运动中停止与恢复、快速目标切换、OLED 与舵机并行、堆稳定。最大 OLED 区域传输 4455µs，内部堆 364184 字节保持不变，`min_heap` 358532 字节，10 秒内 blinks 由 5 增至 6。
+- 2 分钟连续运行：14 次舵机目标、16 次表情切换和周期性 `servo stop` + `servo center`，`failures=0`，blinks 由 0 增至 15，内部堆 364212 字节保持不变，`min_heap` 358852–358888 字节，无复位。
+- 自动测试期间保持舵机外部 5V 断开，因此只验证固件、串口和 PWM 逻辑，没有观察到舵机实际运动；测试结束状态为舵机 `stopped`/`output=off`、RGB 熄灭、normal 眼睛。
+- 2026-11-07 用户随后接通外部 5V 完成实物步骤：上电后舵机不自动运动；首次 `servo center` 因原位置接近 90° 无可见位移，`servo 105` 确认转动；后续 75/120/60、运动中 stop 与恢复、OLED 并行均反馈正常。
+- 原始日志位于 `work/005-build*.log`、`work/005-upload*.log`、`work/005-serial-test.log`、`work/005-soak.log`，被 Git 忽略，未归档入库。
+- 实物验收步骤见实验 005 第 8 节；2026-11-07 用户反馈全部步骤正常，实验 005 记为已验收。
+
 ## 未决事项与已解决问题
 
 | 事项 | 状态 / 影响 | 后续处理 |
@@ -117,12 +134,14 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 002 Git 同步 | 已完成 | 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已推送到 `origin/main` 并核对远程一致 |
 | 实验 004 实物验收 | 已完成 | 2026-11-07 用户确认十种表情、眨眼与显示均正常；后续修改渲染或更换屏幕时需重新观察 |
 | 实验 004 Git 同步 | 已完成 | 实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
+| 实验 005 实物验收 | 已完成 | 2026-11-07 用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常；实际角度与电流未测量 |
+| 实验 005 Git 同步 | 未开始 | 实现和文档尚未提交；提交与推送需用户确认 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：实验 004 已完成实现、软件验证、用户实物验收与 GitHub 同步。** 设备当前运行实验 004，停留在 normal 眼睛画面、RGB 熄灭。随后从下方长期目标候选中选择下一阶段；若先调整表情渲染，修改后需重新做实物观察。
+**当前下一步：等待用户确认实验 005 的提交与推送。** 实验 005 已通过软件检查、烧录校验和 2026-11-07 的用户实物验收；代码、测试脚本和文档尚未提交。用户授权后按“实现与文档”一个提交保存并推送，核对远程一致，再更新 Git 同步记录。之后可由用户决定下一阶段（如第二只舵机、情绪动作联动或 Wi-Fi 接入）；这些候选尚未排期。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -148,6 +167,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 实验 003 第一阶段通信验收：Wire 扫描、三环境构建、烧录校验、52 项实机检查，两次 0x3C 应答；权限阻塞已解除 | [实验 003](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 | 2026-11-07 | 实验 003 第二阶段：增加 U8g2 双驱动串口切换和测试图；最终构建、烧录和 65 项串口检查通过，SH1106 用户实物确认通过，SSD1306 用户反馈异常，默认保留 SH1106 | [实验 003 第二阶段](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 | 2026-11-07 | 实验 004：OLED 表情引擎 V1.0，十种表情、眨眼、状态查询、非阻塞状态机与增量刷新；三环境构建、烧录校验、244 项串口/软件检查通过，用户实物确认十种表情与眨眼均正常 | [实验 004](experiments/004-oled-eyes.md)；实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送并核对一致 |
+| 2026-11-07 | 实验 005：SG90 单舵机控制，GPIO4、50Hz LEDC（S3 14 位）、60–120° 软件限位、非阻塞渐进运动与 `servo stop` 放松策略；三环境构建、烧录校验、348 项串口/软件检查及 2 分钟连续运行通过；用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，记为已验收 | [实验 005](experiments/005-servo.md)；实现尚未提交 |
 
 ## 维护方法
 

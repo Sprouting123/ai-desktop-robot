@@ -3,9 +3,11 @@
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <esp32s3/spiram.h>
+#include <cstdlib>
 #include <cstring>
 
 #include "eyes_engine.h"
+#include "servo_controller.h"
 
 #ifndef RGB_LED_PIN
 #error "Select diagnostics, rgb_gpio48, or rgb_gpio38 in PlatformIO."
@@ -26,6 +28,7 @@ constexpr uint8_t kOledAddress = 0x3C;
 U8G2_SH1106_128X64_NONAME_F_HW_I2C sh1106(U8G2_R0, U8X8_PIN_NONE);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C ssd1306(U8G2_R0, U8X8_PIN_NONE);
 eyes::Engine eyesEngine(sh1106);
+servo::Controller servoController(servo::kDefaultConfig);
 const char* oledDriver = "none";
 bool oledDrawCalled = false;
 bool eyesVisible = false;
@@ -68,7 +71,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -238,6 +241,51 @@ void executeEyes(char* args) {
   Serial.printf("OK expression=%s\n", eyes::name(type));
 }
 
+void executeServo(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR servo_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    servoController.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    // Explicit safe state: cancel movement and stop generating pulses.
+    servoController.stop();
+    Serial.println("OK servo=stopped output=off");
+    return;
+  }
+  if (std::strcmp(args, "center") == 0) {
+    if (!servoController.center()) {
+      Serial.println("ERR servo_not_ready");
+      return;
+    }
+    Serial.printf("OK servo=center angle=%d\n", servoController.centerAngle());
+    return;
+  }
+
+  char* end = nullptr;
+  const long value = std::strtol(args, &end, 10);
+  // Reject negative values, non-digits, trailing words and absurd values.
+  // Values that parse but are outside the configured range get a separate error.
+  if (end == args || *end != '\0' || value < 0 || value > 1000) {
+    Serial.println("ERR servo_usage; use help");
+    return;
+  }
+  const int angle = static_cast<int>(value);
+  if (!servoController.validAngle(angle)) {
+    Serial.printf("ERR servo_range min=%d max=%d\n",
+                  servoController.minAngle(), servoController.maxAngle());
+    return;
+  }
+  if (!servoController.setAngle(angle)) {
+    Serial.println("ERR servo_not_ready");
+    return;
+  }
+  Serial.printf("OK servo=target angle=%d\n", angle);
+}
+
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
 
 void executeCommand() {
@@ -269,6 +317,11 @@ void executeCommand() {
     char* args = text + 4;
     while (isPadding(*args)) ++args;
     executeEyes(args);
+  } else if (std::strncmp(text, "servo", 5) == 0 &&
+             (text[5] == '\0' || isPadding(text[5]))) {
+    char* args = text + 5;
+    while (isPadding(*args)) ++args;
+    executeServo(args);
   } else {
     for (const Color& color : kColors) {
       if (std::strcmp(text, color.name) == 0) {
@@ -326,13 +379,16 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 004] OLED eyes V1.0 / Arduino");
+  Serial.println("\n[experiment 005] OLED eyes + SG90 servo / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
                 i2cReady ? 1U : 0U, kI2cSda, kI2cScl,
                 static_cast<unsigned long>(kI2cFrequency), kI2cTimeoutMs);
   printHardware();
+  // No pulses until an explicit servo command. The first flash of experiment
+  // 005 therefore cannot start an automatic servo sweep.
+  servoController.begin();
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -347,4 +403,6 @@ void loop() {
   }
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
+  // One small servo step at most; the 20 ms schedule is independent of OLED I/O.
+  servoController.update();
 }

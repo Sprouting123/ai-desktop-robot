@@ -129,7 +129,7 @@ src/
 
 ## 8. 自动化测试
 
-脚本：`.venv/bin/python scripts/test_serial_eyes.py`（先关闭监视器）。
+脚本：`.venv/bin/python scripts/test_serial_eyes.py`（先关闭监视器；该脚本对应实验 004 固件，实验 005 起当前固件使用 `scripts/test_serial_servo.py`）。
 
 结果：**244 项检查全部通过**，运行约 67 秒，覆盖：
 
