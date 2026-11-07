@@ -31,13 +31,16 @@
 - 首个实验只连接 USB。新增模块前先确认其型号、供电、接线与所占 GPIO，再修改代码和连接硬件。
 - `ESP.getPsramSize()` 是堆容量，略小于物理 8 MB；容量校验应区分物理容量与分配器开销，参照当前程序实现。
 
-## 当前固件接口（实验 002）
+## 当前固件接口（实验 003 第二阶段）
 
-- 当前 `src/main.cpp` 实现[串口命令实验 002](docs/experiments/002-serial-led.md)，上电 `off`，按 `red` / `green` / `blue` / `off` 改变并保持状态；`status` 和 `help` 不改变灯光。不再自动循环。
+- 当前 `src/main.cpp` 保留[串口命令实验 002](docs/experiments/002-serial-led.md)，上电 `off`，按 `red` / `green` / `blue` / `off` 改变并保持状态；`status` 和 `help` 不改变灯光。不再自动循环。
+- 新增 `i2cscan`，使用 Wire、SDA GPIO8 / SCL GPIO9、100kHz，扫描 0x08–0x77；每次事务超时 25ms。扫描为同步命令，期间暂不处理新串口命令，不改变 RGB 状态；应答地址不能证明 OLED 型号或显示效果。详见[实验 003](docs/experiments/003-i2c-scan.md)。
+- OLED 首次显示使用 U8g2 2.36.17，上电默认 SH1106 128×64；`oled_sh1106` / `oled_ssd1306` 可在同一固件切换并重画，`oled_status` 查询当前方案。复位恢复 SH1106，不持久化选择；`off` 仍仅关闭 RGB。地址保持 0x3C，U8g2 使用左移一位后的地址参数，硬件 I²C 保持 100kHz。日志中的绘图调用和 ACK 不代表光学验收或型号鉴定。
+- OLED 用户报告接线：VCC → 3V3、GND → GND、SDA → GPIO8、SCL → GPIO9；控制器和分辨率待确认。
 - 接收使用固定 32 字符缓冲，每轮最多读取 64 个已到达字节；支持 CR、LF、CRLF、首尾空白和大小写。过长或非法的一整行必须丢弃，到换行后再恢复，不能执行截断前缀或后缀。
 - `status` 表示最后命令状态，不代表光学测量。串口 ACK 与用户灯光验收分别记录。
 - 监视器已配置 `monitor_echo=yes`、`monitor_eol=LF` 和 `send_on_enter`，在终端直接输入英文命令并按回车发送。
-- 实机回归脚本为 `.venv/bin/python scripts/test_serial_led.py`；先关闭其他监视器。脚本核对设备身份，会复位、切换颜色，最后熄灯并关闭串口。
+- 实机回归脚本为 `.venv/bin/python scripts/test_serial_led.py`；先关闭其他监视器。脚本核对设备身份，会复位、切换颜色、扫描 I²C、切换两种 OLED 驱动（当前要求 0x3C 应答），最后 RGB 熄灯、屏幕恢复 SH1106 测试图并关闭串口。
 - `diagnostics` 仍不驱动 LED，颜色命令返回 `ERR led_disabled`；`rgb_gpio38` 仍仅为其他版本的备选。本板保持 `rgb_gpio48`。
 - 实验 001 文档是历史验收记录，后续程序进入新实验时保留该记录；旧固件实现通过对应 Git 历史查阅。
 

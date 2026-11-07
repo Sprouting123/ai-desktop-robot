@@ -1,4 +1,4 @@
-"""Live experiment 002 regression check. Resets this board; leaves LED off.
+"""Live RGB regression check for experiment 003. Resets this board; leaves LED off.
 
 Run with .venv/bin/python scripts/test_serial_led.py after closing all monitors.
 It checks UART responses and recovery, not the physical LED color.
@@ -13,7 +13,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-HELP = "HELP red | green | blue | off | status | help; max_line=32; endings=LF/CR/CRLF"
+HELP = "HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status; max_line=32; endings=LF/CR/CRLF"
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -72,8 +72,8 @@ def main():
         port.rts = False
         startup = collect(2)
         print("STARTUP\n" + startup, flush=True)
-        check("experiment 002 boot identity",
-              "[experiment 002] Serial RGB LED / Arduino" in startup, True)
+        check("experiment 003 boot identity",
+              "[experiment 003] OLED driver comparison / Arduino" in startup, True)
         check("physical memory configuration",
               "flash=16777216 psram_chip=8388608" in startup and "[warning]" not in startup, True)
         status("initial state is off", "off")
@@ -113,9 +113,47 @@ def main():
         status("state after immediate recovery", "red")
         expect("help preserves state", b"help\r\n", [HELP])
         status("state after help", "red")
+        check("I2C initialized", "I2C_INIT ready=1 sda=8 scl=9 frequency_hz=100000 timeout_ms=25" in startup, True)
+        previous_addresses = None
+        for payload in (b"i2cscan\n", b" \tI2CSCAN \r\n"):
+            lines = send(payload, 5)
+            print("SCAN\n" + "\n".join(lines), flush=True)
+            check("scan configuration", lines[0] if lines else "",
+                  "I2C_SCAN begin sda=8 scl=9 frequency_hz=100000 range=0x08-0x77")
+            addresses = [line for line in lines[1:-1]
+                         if re.fullmatch(r"I2C_FOUND address=0x[0-9A-F]{2}", line)]
+            check("scan reports only valid discovered addresses", len(addresses), len(lines) - 2)
+            check("connected device responds", bool(addresses), True)
+            check("scan completes without bus errors", lines[-1],
+                  f"I2C_SCAN done devices={len(addresses)} errors=0 result=ok")
+            if previous_addresses is not None:
+                check("repeat scan is stable", addresses, previous_addresses)
+            previous_addresses = addresses
+            status("scan preserves red state", "red")
+        expect("oversized scan is discarded", b"i2cscan" + b" " * 26 + b"\n", [TOO_LONG])
+        expect("invalid scan is discarded", b"i2cscan\x00\n", [INVALID])
+        def oled_status(driver):
+            return f"OLED_STATUS driver={driver} address=0x3C draw_called=1 visual=unverified frequency_hz=100000"
+
+        check("boot draws SH1106", oled_status("SH1106") in startup, True)
+        for driver, payload in (("SSD1306", b" OLED_SSD1306 \r\n"),
+                                ("SH1106", b"oled_sh1106\n")):
+            expect(f"switch and draw {driver}", payload,
+                   [f"OLED_DRAW driver={driver} address=0x3C probe_after=0 visual=unverified",
+                    oled_status(driver)], 1.5)
+            expect(f"query {driver}", b"oled_status\n", [oled_status(driver)])
+            status(f"{driver} preserves RGB", "red")
+            expect(f"scan after {driver}", b"i2cscan\n",
+                   ["I2C_SCAN begin sda=8 scl=9 frequency_hz=100000 range=0x08-0x77",
+                    "I2C_FOUND address=0x3C",
+                    "I2C_SCAN done devices=1 errors=0 result=ok"], 5)
+        expect("invalid driver name", b"oled_ssd1306 extra\n", [UNKNOWN])
+        expect("oversized display command", b"oled_ssd1306" + b" " * 22 + b"\n", [TOO_LONG])
+        expect("invalid display command", b"oled_ssd1306\x00\n", [INVALID])
+        expect("rejected commands preserve SH1106", b"oled_status\n", [oled_status("SH1106")])
         expect("finish off", b"off\n", ["OK state=off pin=48"])
         status("final state", "off")
-        print(f"PASS: {passed} checks; physical LED colors still require user confirmation.")
+        print(f"PASS: {passed} checks; physical LED colors and OLED display still require user confirmation.")
     finally:
         if port.is_open:
             # Terminate any partial/invalid line before requesting the safe final state.

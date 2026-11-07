@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
+#include <Wire.h>
+#include <U8g2lib.h>
 #include <esp32s3/spiram.h>
 #include <cstring>
 
@@ -11,6 +13,18 @@ static_assert(RGB_LED_PIN == -1 || RGB_LED_PIN == 48 || RGB_LED_PIN == 38,
 
 namespace {
 constexpr uint8_t kBrightness = 24;
+constexpr int kI2cSda = 8;
+constexpr int kI2cScl = 9;
+constexpr uint32_t kI2cFrequency = 100000;
+constexpr uint16_t kI2cTimeoutMs = 25;
+bool i2cReady = false;
+constexpr uint8_t kOledAddress = 0x3C;
+// Wire owns GPIO8/9. Leave U8g2 pins unset so its GPIO init does not
+// reconfigure an already running ESP32 I2C bus during driver switches.
+U8G2_SH1106_128X64_NONAME_F_HW_I2C sh1106(U8G2_R0, U8X8_PIN_NONE);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C ssd1306(U8G2_R0, U8X8_PIN_NONE);
+const char* oledDriver = "none";
+bool oledDrawCalled = false;
 constexpr size_t kMaxCommandLength = 32;  // Excludes CR / LF, includes whitespace.
 constexpr size_t kReadBudget = 64;        // Return to loop() even under continuous input.
 
@@ -50,7 +64,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -71,6 +85,82 @@ void applyColor(const Color& color) {
 #endif
 }
 
+void scanI2c() {
+  if (!i2cReady) {
+    Serial.println("ERR i2c_not_ready; reset to retry initialization");
+    return;
+  }
+  Serial.printf("I2C_SCAN begin sda=%d scl=%d frequency_hz=%lu range=0x08-0x77\n",
+                kI2cSda, kI2cScl, static_cast<unsigned long>(kI2cFrequency));
+  unsigned found = 0;
+  unsigned errors = 0;
+  // Skip reserved addresses. Probe with address + STOP, no display data.
+  // Synchronous command: each transaction has a timeout; LED state is untouched.
+  for (uint8_t address = 0x08; address <= 0x77; ++address) {
+    Wire.beginTransmission(address);
+    const uint8_t result = Wire.endTransmission(true);
+    if (result == 0) {
+      ++found;
+      Serial.printf("I2C_FOUND address=0x%02X\n", address);
+    } else if (result != 2) {  // Address NACK is normal for an unused address.
+      ++errors;
+      Serial.printf("I2C_ERROR address=0x%02X code=%u\n", address, result);
+    }
+  }
+  Serial.printf("I2C_SCAN done devices=%u errors=%u result=%s\n", found, errors,
+                errors ? "bus_error" : (found ? "ok" : "no_devices"));
+}
+
+void printOledStatus() {
+  Serial.printf("OLED_STATUS driver=%s address=0x%02X draw_called=%u visual=unverified frequency_hz=%lu\n",
+                oledDriver, kOledAddress, oledDrawCalled ? 1U : 0U,
+                static_cast<unsigned long>(Wire.getClock()));
+}
+
+void showOled(bool useSh1106) {
+  oledDrawCalled = false;
+  if (!i2cReady) {
+    Serial.println("ERR i2c_not_ready; reset to retry initialization");
+    return;
+  }
+  Wire.beginTransmission(kOledAddress);
+  const uint8_t probe = Wire.endTransmission(true);
+  if (probe != 0) {
+    Serial.printf("ERR oled_no_ack address=0x%02X code=%u\n", kOledAddress, probe);
+    return;
+  }
+  U8G2& display = useSh1106 ? static_cast<U8G2&>(sh1106) : static_cast<U8G2&>(ssd1306);
+  oledDriver = useSh1106 ? "SH1106" : "SSD1306";
+  display.setI2CAddress(kOledAddress << 1);  // U8g2 expects the shifted address.
+  display.setBusClock(kI2cFrequency);
+  display.begin();  // Library return value is not proof of physical display success.
+  Wire.setTimeOut(kI2cTimeoutMs);
+  display.clearBuffer();
+  display.setDrawColor(1);
+  display.drawFrame(0, 0, 128, 64);
+  // Four distinct corner markers: filled square, frame, cross, diagonal cross.
+  display.drawBox(2, 2, 5, 5);
+  display.drawFrame(121, 2, 5, 5);
+  display.drawHLine(2, 59, 5);
+  display.drawVLine(4, 57, 5);
+  display.drawLine(121, 57, 125, 61);
+  display.drawLine(125, 57, 121, 61);
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(10, 18, "HELLO ESP32!");
+  display.drawStr(10, 31, "OLED TEST 003");
+  display.drawStr(10, 44, "I2C: 0x3C");
+  display.drawStr(40, 59, oledDriver);
+  display.sendBuffer();
+  oledDrawCalled = true;
+  // U8g2's Arduino transport does not propagate per-transfer Wire errors.
+  // This ACK and completion log are software evidence, not an optical check.
+  Wire.beginTransmission(kOledAddress);
+  const uint8_t after = Wire.endTransmission(true);
+  Serial.printf("OLED_DRAW driver=%s address=0x%02X probe_after=%u visual=unverified\n",
+                oledDriver, kOledAddress, after);
+  printOledStatus();
+}
+
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
 
 void executeCommand() {
@@ -89,6 +179,14 @@ void executeCommand() {
     printHelp();
   } else if (std::strcmp(text, "status") == 0) {
     printStatus();
+  } else if (std::strcmp(text, "i2cscan") == 0) {
+    scanI2c();
+  } else if (std::strcmp(text, "oled_sh1106") == 0) {
+    showOled(true);
+  } else if (std::strcmp(text, "oled_ssd1306") == 0) {
+    showOled(false);
+  } else if (std::strcmp(text, "oled_status") == 0) {
+    printOledStatus();
   } else {
     for (const Color& color : kColors) {
       if (std::strcmp(text, color.name) == 0) {
@@ -146,10 +244,16 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 002] Serial RGB LED / Arduino");
+  Serial.println("\n[experiment 003] OLED driver comparison / Arduino");
+  i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
+  Wire.setTimeOut(kI2cTimeoutMs);
+  Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
+                i2cReady ? 1U : 0U, kI2cSda, kI2cScl,
+                static_cast<unsigned long>(kI2cFrequency), kI2cTimeoutMs);
   printHardware();
   printStatus();
   printHelp();
+  showOled(true);
 }
 
 void loop() {
