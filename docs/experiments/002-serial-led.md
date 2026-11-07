@@ -3,7 +3,7 @@
 - 日期：2026-11-07（Asia/Shanghai）。
 - 状态：**已验收**。三个环境构建成功，GPIO48 烧录与写入校验成功，38 项实机串口检查通过；用户在 VS Code Monitor 中确认三种颜色保持且 `off` 熄灯。
 - 当前程序：`src/main.cpp`；默认环境 `rgb_gpio48`；启动标记 `[experiment 002] Serial RGB LED / Arduino`。
-- Git：用户于 2026-11-07 明确授权本地提交；实现、测试脚本与相关文档纳入同一次本地提交。GitHub 推送仍需单独确认，当前未推送。
+- Git：实验实现、测试脚本与初始记录已提交为 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62)；用户于 2026-11-07 明确授权推送，已推送到 GitHub `origin/main` 并核对远程提交一致。
 - 历史保留：实验 001 文档未修改；当时的自动循环程序可在提交 `6adb065` 的 `src/main.cpp` 中查看。当前主程序已进入实验 002。
 
 ## 1. 目标、接线与复用配置

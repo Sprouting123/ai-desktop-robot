@@ -7,7 +7,7 @@
 - **实验 001 已验收：** GPIO48 板载 RGB LED 红 → 绿 → 蓝循环，每色约 1 秒；构建、烧录校验、串口和用户实物观察均有记录。
 - **管理机制已建立：** 规则、进度和交接入口已提交为 `93c9ce6`；继续随项目状态维护。
 - **实验 002 已验收：** 六个串口命令已实现、构建与烧录通过、38 项实机串口检查通过；用户在 VS Code Monitor 中确认红绿蓝保持且 off 熄灯。当前设备运行实验 002，启动为 off，不再自动循环。
-- **Git 范围：** 用户于 2026-11-07 授权本地提交实验 002；GitHub 推送仍需单独确认，当前未推送。实验基线提交为 `93c9ce6`，本次提交号以本地 Git 历史为准。
+- **Git 同步：** 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
 - 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
@@ -69,7 +69,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - PlatformIO CLI Monitor 已实际验证本地回显、Enter 才发送、status/help/off 回复及 Ctrl-C 释放串口；VS Code 的命令名称已核对。
 - 用户通过 VS Code Monitor 确认：红、绿、蓝各自保持，off 可熄灭；因此可记为已验收，而不只是日志通过。
 - 原始测试资料在本机 `work/002-*.log` 及 `work/002-monitor-transcript.txt`，被 Git 忽略；实验文档保存关键结果，新增测试脚本用于复现。
-- 用户已授权将本实验实现、测试脚本和文档一并本地提交；尚未授权 GitHub 推送。
+- 用户已授权提交与推送；实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已在 GitHub 上核验。
 
 ## 未决事项与已解决问题
 
@@ -82,13 +82,13 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | PSRAM 容量误报警 | 已修正，最终日志无该警告 | 后续区分物理容量与可用堆容量 |
 | 系统 ROS Python 路径 | 项目 CLI 已可用；排除 `PYTHONPATH` 后依赖检查通过 | 遇到包冲突时按 AGENTS.md 的项目级方法处理 |
 | 实验 002 验证 | 已验收；没有已知硬件阻塞 | 保留测试和用户观察结果，继续维护当前串口接口 |
-| 实验 002 Git 同步 | 本地提交已获授权；远程推送待确认 | 本次保存在本地 Git，获得明确推送许可后再检查状态并同步 GitHub |
+| 实验 002 Git 同步 | 已完成 | 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已推送到 `origin/main` 并核对远程一致 |
 
 本次已检查 USB 目标与访问权限，测试结束时关闭了工具监视器并释放端口。用户可继续使用自己的 VS Code Monitor；以后若要烧录或自动测试，先关闭该监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：如需同步 GitHub，先取得用户的推送确认，再检查 Git 状态并推送。** 实验 002 已完成实物验收并获准本地提交。后续复盘字节流、行缓冲与非阻塞接收，由用户 / ChatGPT 确定实验 003；尚未启动其他模块。
+**当前下一步：复盘字节流、行缓冲与非阻塞接收，由用户 / ChatGPT 确定实验 003 的目标和验收标准。** 实验 002 已验收并同步 GitHub；尚未启动其他模块。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -110,7 +110,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-06 | 建立并验收 RGB 实验，保存工程、配置和实验记录 | [6adb065](https://github.com/Sprouting123/ai-desktop-robot/commit/6adb06554445ba208b6ba03cf86b24f0bbf14730)；实验 001 使用该日作为用户会话日期 |
 | 2026-11-07 | 补充正反面照片信息，保留厂家和 PCB 版本未确认的边界 | [53fdc11](https://github.com/Sprouting123/ai-desktop-robot/commit/53fdc11e0206b8fe68bdad27248fdc85bbedc90e) |
 | 2026-11-07 | 建立长期管理规则、进度文档与导航，已同步 GitHub | [93c9ce6](https://github.com/Sprouting123/ai-desktop-robot/commit/93c9ce60dc769894af5be5633a9955d9b8d0b3d3) |
-| 2026-11-07 | 实验 002 实现与验收：六命令、健壮输入处理、38 项实机检查、Monitor 与用户灯光确认；实验 001 记录保留 | [实验 002](experiments/002-serial-led.md)，用户已授权本地提交，推送待确认 |
+| 2026-11-07 | 实验 002 实现与验收：六命令、健壮输入处理、38 项实机检查、Monitor 与用户灯光确认；实验 001 记录保留 | [实验 002](experiments/002-serial-led.md)，实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已获授权并推送 |
 
 ## 维护方法
 
