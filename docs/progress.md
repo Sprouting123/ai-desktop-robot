@@ -9,7 +9,7 @@
 - **实验 002 已验收：** 六个串口命令已实现、构建与烧录通过、38 项实机串口检查通过；用户在 VS Code Monitor 中确认红绿蓝保持且 off 熄灯。实验 002 验收时设备启动为 off，不再自动循环。
 - **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。当前设备运行实验 003；OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
 - **实验 003 第二阶段：已验收（SH1106 首次显示）。** U8g2 2.36.17 已加入；默认 SH1106，支持串口切换 SSD1306。最终三环境构建和 GPIO48 烧录校验通过，65 项实机串口检查全部通过；用户已确认 SH1106 画面完整、没有问题；SSD1306 对比画面由用户反馈异常，显示未通过；保留 SH1106 为默认方案。
-- **Git 同步：** 用户于 2026-11-07 已确认提交与推送实验 003 两阶段改动；正在执行，远程结果待核验。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
+- **Git 同步：** 用户于 2026-11-07 已确认提交与推送；实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送至 `origin/main`，经远程查询核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
 - 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
@@ -107,7 +107,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 
 ## 下一步与后续候选
 
-**当前下一步：完成已授权的 Git 同步后，由用户确定 OLED 表情实验目标。** SH1106 已获实物验收，SSD1306 对比异常；输入 `oled_sh1106` 可恢复正常画面，复位默认 SH1106。未观察用户是否已切回；显示兼容性不等于控制器型号鉴定。
+**当前下一步：由用户确定 OLED 表情实验目标。** SH1106 已获实物验收，SSD1306 对比异常；输入 `oled_sh1106` 可恢复正常画面，复位默认 SH1106。未观察用户是否已切回；显示兼容性不等于控制器型号鉴定。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -130,8 +130,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 补充正反面照片信息，保留厂家和 PCB 版本未确认的边界 | [53fdc11](https://github.com/Sprouting123/ai-desktop-robot/commit/53fdc11e0206b8fe68bdad27248fdc85bbedc90e) |
 | 2026-11-07 | 建立长期管理规则、进度文档与导航，已同步 GitHub | [93c9ce6](https://github.com/Sprouting123/ai-desktop-robot/commit/93c9ce60dc769894af5be5633a9955d9b8d0b3d3) |
 | 2026-11-07 | 实验 002 实现与验收：六命令、健壮输入处理、38 项实机检查、Monitor 与用户灯光确认；实验 001 记录保留 | [实验 002](experiments/002-serial-led.md)，实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已获授权并推送 |
-| 2026-11-07 | 实验 003 第一阶段通信验收：Wire 扫描、三环境构建、烧录校验、52 项实机检查，两次 0x3C 应答；权限阻塞已解除 | [实验 003](experiments/003-i2c-scan.md)；当前未提交、未推送 |
-| 2026-11-07 | 实验 003 第二阶段：增加 U8g2 双驱动串口切换和测试图；最终构建、烧录和 65 项串口检查通过，SH1106 用户实物确认通过，SSD1306 用户反馈异常，默认保留 SH1106 | [实验 003 第二阶段](experiments/003-i2c-scan.md)；尚未提交、推送 |
+| 2026-11-07 | 实验 003 第一阶段通信验收：Wire 扫描、三环境构建、烧录校验、52 项实机检查，两次 0x3C 应答；权限阻塞已解除 | [实验 003](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
+| 2026-11-07 | 实验 003 第二阶段：增加 U8g2 双驱动串口切换和测试图；最终构建、烧录和 65 项串口检查通过，SH1106 用户实物确认通过，SSD1306 用户反馈异常，默认保留 SH1106 | [实验 003 第二阶段](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 
 ## 维护方法
 
