@@ -5,6 +5,8 @@
 #include <esp32s3/spiram.h>
 #include <cstring>
 
+#include "eyes_engine.h"
+
 #ifndef RGB_LED_PIN
 #error "Select diagnostics, rgb_gpio48, or rgb_gpio38 in PlatformIO."
 #endif
@@ -23,8 +25,10 @@ constexpr uint8_t kOledAddress = 0x3C;
 // reconfigure an already running ESP32 I2C bus during driver switches.
 U8G2_SH1106_128X64_NONAME_F_HW_I2C sh1106(U8G2_R0, U8X8_PIN_NONE);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C ssd1306(U8G2_R0, U8X8_PIN_NONE);
+eyes::Engine eyesEngine(sh1106);
 const char* oledDriver = "none";
 bool oledDrawCalled = false;
+bool eyesVisible = false;
 constexpr size_t kMaxCommandLength = 32;  // Excludes CR / LF, includes whitespace.
 constexpr size_t kReadBudget = 64;        // Return to loop() even under continuous input.
 
@@ -64,7 +68,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -111,46 +115,62 @@ void scanI2c() {
                 errors ? "bus_error" : (found ? "ok" : "no_devices"));
 }
 
-void printOledStatus() {
-  Serial.printf("OLED_STATUS driver=%s address=0x%02X draw_called=%u visual=unverified frequency_hz=%lu\n",
-                oledDriver, kOledAddress, oledDrawCalled ? 1U : 0U,
-                static_cast<unsigned long>(Wire.getClock()));
-}
-
-void showOled(bool useSh1106) {
-  oledDrawCalled = false;
+// Returns the requested display only after it responds at 0x3C. begin() runs
+// only when the active driver changes, so repeated eye commands do not reset it.
+U8G2* prepareDisplay(bool useSh1106) {
   if (!i2cReady) {
     Serial.println("ERR i2c_not_ready; reset to retry initialization");
-    return;
+    return nullptr;
   }
   Wire.beginTransmission(kOledAddress);
   const uint8_t probe = Wire.endTransmission(true);
   if (probe != 0) {
     Serial.printf("ERR oled_no_ack address=0x%02X code=%u\n", kOledAddress, probe);
-    return;
+    return nullptr;
   }
-  U8G2& display = useSh1106 ? static_cast<U8G2&>(sh1106) : static_cast<U8G2&>(ssd1306);
-  oledDriver = useSh1106 ? "SH1106" : "SSD1306";
-  display.setI2CAddress(kOledAddress << 1);  // U8g2 expects the shifted address.
-  display.setBusClock(kI2cFrequency);
-  display.begin();  // Library return value is not proof of physical display success.
-  Wire.setTimeOut(kI2cTimeoutMs);
-  display.clearBuffer();
-  display.setDrawColor(1);
-  display.drawFrame(0, 0, 128, 64);
+  const char* driver = useSh1106 ? "SH1106" : "SSD1306";
+  U8G2& display =
+      useSh1106 ? static_cast<U8G2&>(sh1106) : static_cast<U8G2&>(ssd1306);
+  if (std::strcmp(oledDriver, driver) != 0) {
+    display.setI2CAddress(kOledAddress << 1);  // U8g2 expects the shifted address.
+    display.setBusClock(kI2cFrequency);
+    display.begin();  // Library return value is not proof of physical success.
+    Wire.setTimeOut(kI2cTimeoutMs);
+    oledDriver = driver;
+  }
+  return &display;
+}
+
+void printOledStatus() {
+  Serial.printf("OLED_STATUS driver=%s address=0x%02X draw_called=%u visual=unverified frequency_hz=%lu screen=%s\n",
+                oledDriver, kOledAddress, oledDrawCalled ? 1U : 0U,
+                static_cast<unsigned long>(Wire.getClock()),
+                eyesVisible ? "eyes" : "test");
+}
+
+void showOledTest(bool useSh1106) {
+  // Keep the eyes running if the requested driver cannot be prepared.
+  U8G2* display = prepareDisplay(useSh1106);
+  if (!display) return;
+  eyesEngine.pause();
+  eyesVisible = false;
+  oledDrawCalled = false;
+  display->clearBuffer();
+  display->setDrawColor(1);
+  display->drawFrame(0, 0, 128, 64);
   // Four distinct corner markers: filled square, frame, cross, diagonal cross.
-  display.drawBox(2, 2, 5, 5);
-  display.drawFrame(121, 2, 5, 5);
-  display.drawHLine(2, 59, 5);
-  display.drawVLine(4, 57, 5);
-  display.drawLine(121, 57, 125, 61);
-  display.drawLine(125, 57, 121, 61);
-  display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(10, 18, "HELLO ESP32!");
-  display.drawStr(10, 31, "OLED TEST 003");
-  display.drawStr(10, 44, "I2C: 0x3C");
-  display.drawStr(40, 59, oledDriver);
-  display.sendBuffer();
+  display->drawBox(2, 2, 5, 5);
+  display->drawFrame(121, 2, 5, 5);
+  display->drawHLine(2, 59, 5);
+  display->drawVLine(4, 57, 5);
+  display->drawLine(121, 57, 125, 61);
+  display->drawLine(125, 57, 121, 61);
+  display->setFont(u8g2_font_6x10_tf);
+  display->drawStr(10, 18, "HELLO ESP32!");
+  display->drawStr(10, 31, "OLED TEST 003");
+  display->drawStr(10, 44, "I2C: 0x3C");
+  display->drawStr(40, 59, oledDriver);
+  display->sendBuffer();
   oledDrawCalled = true;
   // U8g2's Arduino transport does not propagate per-transfer Wire errors.
   // This ACK and completion log are software evidence, not an optical check.
@@ -159,6 +179,63 @@ void showOled(bool useSh1106) {
   Serial.printf("OLED_DRAW driver=%s address=0x%02X probe_after=%u visual=unverified\n",
                 oledDriver, kOledAddress, after);
   printOledStatus();
+}
+
+// The eyes always use the physically verified SH1106 path. Switching back from
+// the SSD1306 test screen reinitializes SH1106 through prepareDisplay().
+bool showEyes(eyes::Expression type, bool blinkNow, bool *started) {
+  U8G2* display = prepareDisplay(true);
+  if (!display) return false;
+  const bool wasVisible = eyesVisible;
+  eyesVisible = true;
+  if (blinkNow && wasVisible) {
+    // A blink command on the live eye screen must not reset a blink in
+    // progress; the state model rejects or starts it.
+    const bool b = eyesEngine.blink();
+    if (started) *started = b;
+  } else {
+    eyesEngine.setExpression(type);
+    if (blinkNow) {
+      const bool b = eyesEngine.blink();
+      if (started) *started = b;
+    }
+  }
+  if (!wasVisible) {
+    Serial.printf("EYES_MODE driver=SH1106 expression=%s auto_blink=1\n",
+                  eyes::name(type));
+  }
+  return true;
+}
+
+void executeEyes(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR eyes_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    eyesEngine.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "blink") == 0) {
+    bool started = false;
+    if (!showEyes(eyesEngine.expression(), true, &started)) return;
+    Serial.printf("OK blink expression=%s started=%u\n",
+                  eyes::name(eyesEngine.expression()), started ? 1U : 0U);
+    return;
+  }
+  if (std::strcmp(args, "dump") == 0) {
+    // Debug preview only; it draws into the framebuffer without an I2C write.
+    if (!eyesVisible && !showEyes(eyesEngine.expression(), false, nullptr)) return;
+    eyesEngine.dump(Serial);
+    return;
+  }
+  eyes::Expression type;
+  if (!eyes::parse(args, type)) {
+    Serial.println("ERR unknown_expression; use help");
+    return;
+  }
+  if (!showEyes(type, false, nullptr)) return;
+  Serial.printf("OK expression=%s\n", eyes::name(type));
 }
 
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
@@ -182,11 +259,16 @@ void executeCommand() {
   } else if (std::strcmp(text, "i2cscan") == 0) {
     scanI2c();
   } else if (std::strcmp(text, "oled_sh1106") == 0) {
-    showOled(true);
+    showOledTest(true);
   } else if (std::strcmp(text, "oled_ssd1306") == 0) {
-    showOled(false);
+    showOledTest(false);
   } else if (std::strcmp(text, "oled_status") == 0) {
     printOledStatus();
+  } else if (std::strncmp(text, "eyes", 4) == 0 &&
+             (text[4] == '\0' || isPadding(text[4]))) {
+    char* args = text + 4;
+    while (isPadding(*args)) ++args;
+    executeEyes(args);
   } else {
     for (const Color& color : kColors) {
       if (std::strcmp(text, color.name) == 0) {
@@ -244,7 +326,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 003] OLED driver comparison / Arduino");
+  Serial.println("\n[experiment 004] OLED eyes V1.0 / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -253,7 +335,7 @@ void setup() {
   printHardware();
   printStatus();
   printHelp();
-  showOled(true);
+  showEyes(eyes::Expression::Normal, false, nullptr);
 }
 
 void loop() {
@@ -263,4 +345,6 @@ void loop() {
     if (ch < 0) break;
     receiveByte(static_cast<uint8_t>(ch));
   }
+  // One dirty display region per loop; never blocks waiting for a full frame.
+  eyesEngine.update();
 }
