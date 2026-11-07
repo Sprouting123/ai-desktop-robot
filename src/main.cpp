@@ -7,6 +7,8 @@
 #include <cstring>
 
 #include "eyes_engine.h"
+#include "mood_controller.h"
+#include "motion_engine.h"
 #include "servo_controller.h"
 
 #ifndef RGB_LED_PIN
@@ -30,6 +32,12 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C ssd1306(U8G2_R0, U8X8_PIN_NONE);
 eyes::Engine eyesEngine(sh1106);
 servo::Controller servo1Controller(servo::kDefaultConfig);
 servo::Controller servo2Controller(servo::kServo2Config);
+// The motion engine coordinates the two controllers; it never touches PWM
+// directly and therefore cannot bypass the servo limits.
+motion::Engine motionEngine(servo1Controller, servo2Controller);
+// Mood couples one expression with one motion profile through the existing
+// eyes and motion entry points.
+mood::Controller moodController(eyesEngine, motionEngine);
 const char* oledDriver = "none";
 bool oledDrawCalled = false;
 bool eyesVisible = false;
@@ -72,7 +80,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -239,7 +247,19 @@ void executeEyes(char* args) {
     return;
   }
   if (!showEyes(type, false, nullptr)) return;
+  // A direct eyes command breaks the mood/face mapping but never starts or
+  // stops a servo action by itself.
+  moodController.clear();
   Serial.printf("OK expression=%s\n", eyes::name(type));
+}
+
+// Any command that changes servo output takes manual control. Cancelling the
+// sequence first prevents automatic targets and manual targets from competing.
+// Only the commanded channel changes afterwards; the other servo finishes its
+// last target and keeps holding it, exactly as in phase 1.
+void takeManualServoControl() {
+  motionEngine.cancel();
+  moodController.clear();
 }
 
 // Shared command body for the legacy `servo` form (servo 1) and the explicit
@@ -256,11 +276,17 @@ void executeServo(servo::Controller& controller, const char* name,
   }
   if (std::strcmp(args, "stop") == 0) {
     // Explicit safe state: cancel movement and stop generating pulses.
+    takeManualServoControl();
     controller.stop();
     Serial.printf("OK %s=stopped output=off\n", name);
     return;
   }
   if (std::strcmp(args, "center") == 0) {
+    if (!controller.ready()) {
+      Serial.println("ERR servo_not_ready");
+      return;
+    }
+    takeManualServoControl();
     if (!controller.center()) {
       Serial.println("ERR servo_not_ready");
       return;
@@ -283,6 +309,13 @@ void executeServo(servo::Controller& controller, const char* name,
                   controller.minAngle(), controller.maxAngle());
     return;
   }
+  if (!controller.ready()) {
+    Serial.println("ERR servo_not_ready");
+    return;
+  }
+  // Only a valid, ready command interrupts an automatic sequence. Rejected
+  // arguments leave the current motion exactly as it was.
+  takeManualServoControl();
   if (!controller.setAngle(angle)) {
     Serial.println("ERR servo_not_ready");
     return;
@@ -298,6 +331,7 @@ void executeServoBoth(char* action) {
       Serial.println("ERR servo_not_ready");
       return;
     }
+    takeManualServoControl();
     servo1Controller.center();
     servo2Controller.center();
     Serial.printf("OK servo1=center angle=%d\n", servo1Controller.centerAngle());
@@ -305,6 +339,9 @@ void executeServoBoth(char* action) {
     return;
   }
   if (std::strcmp(action, "stop") == 0) {
+    // Requirement: this command also clears every automatic action and mood.
+    motionEngine.stop();
+    moodController.clear();
     servo1Controller.stop();
     servo2Controller.stop();
     Serial.println("OK servo1=stopped output=off");
@@ -312,6 +349,67 @@ void executeServoBoth(char* action) {
     return;
   }
   Serial.println("ERR servo_usage; use help");
+}
+
+void executeMotion(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR motion_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    motionEngine.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    // Cancel the remaining sequence and remove both pulses. The mood label no
+    // longer describes the machine, but the face is deliberately kept.
+    motionEngine.stop();
+    moodController.clear();
+    Serial.println("OK motion=stopped output=off");
+    return;
+  }
+  motion::Kind kind;
+  if (!motion::parse(args, kind)) {
+    Serial.println("ERR motion_usage; use help");
+    return;
+  }
+  if (!motionEngine.start(kind)) {
+    Serial.println("ERR servo_not_ready");
+    return;
+  }
+  // A manual motion replaces any coordinated mood, but not the expression.
+  moodController.clear();
+  Serial.printf("OK motion=%s steps=%u\n", motion::name(kind),
+                static_cast<unsigned>(motionEngine.totalSteps()));
+}
+
+void executeMood(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR mood_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    moodController.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    // Explicitly report that the face is not reset: only the motion stops.
+    moodController.stop();
+    Serial.printf("OK mood=stopped output=off screen=kept expression=%s\n",
+                  eyes::name(eyesEngine.expression()));
+    return;
+  }
+  mood::Kind kind;
+  if (!mood::parse(args, kind)) {
+    Serial.println("ERR mood_usage; use help");
+    return;
+  }
+  if (!moodController.start(kind)) {
+    Serial.println("ERR servo_not_ready");
+    return;
+  }
+  Serial.printf("OK mood=%s expression=%s motion=%s\n", mood::name(kind),
+                eyes::name(eyesEngine.expression()), motion::name(motionEngine.kind()));
 }
 
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
@@ -345,6 +443,16 @@ void executeCommand() {
     char* args = text + 4;
     while (isPadding(*args)) ++args;
     executeEyes(args);
+  } else if (std::strncmp(text, "motion", 6) == 0 &&
+             (text[6] == '\0' || isPadding(text[6]))) {
+    char* args = text + 6;
+    while (isPadding(*args)) ++args;
+    executeMotion(args);
+  } else if (std::strncmp(text, "mood", 4) == 0 &&
+             (text[4] == '\0' || isPadding(text[4]))) {
+    char* args = text + 4;
+    while (isPadding(*args)) ++args;
+    executeMood(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -425,7 +533,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 006] OLED eyes + dual SG90 servo / Arduino");
+  Serial.println("\n[experiment 006-2] OLED eyes + dual SG90 motion/mood / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -450,6 +558,9 @@ void loop() {
   }
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
+  // The motion engine only advances a state machine and sets new targets; it
+  // never waits for a servo to arrive.
+  motionEngine.update();
   // One small step per servo at most; their 20 ms schedules are independent of
   // OLED I/O and of each other. Channels 0 and 1 share timer 0 by design, but
   // each controller owns its angle, target and movement state.
