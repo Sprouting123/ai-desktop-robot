@@ -135,13 +135,13 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 004 实物验收 | 已完成 | 2026-11-07 用户确认十种表情、眨眼与显示均正常；后续修改渲染或更换屏幕时需重新观察 |
 | 实验 004 Git 同步 | 已完成 | 实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 | 实验 005 实物验收 | 已完成 | 2026-11-07 用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常；实际角度与电流未测量 |
-| 实验 005 Git 同步 | 未开始 | 实现和文档尚未提交；提交与推送需用户确认 |
+| 实验 005 Git 同步 | 已完成 | 实现与验收提交 [c9c4238](https://github.com/Sprouting123/ai-desktop-robot/commit/c9c4238998e81b5dbca59abb80ebf314a4366eee) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：等待用户确认实验 005 的提交与推送。** 实验 005 已通过软件检查、烧录校验和 2026-11-07 的用户实物验收；代码、测试脚本和文档尚未提交。用户授权后按“实现与文档”一个提交保存并推送，核对远程一致，再更新 Git 同步记录。之后可由用户决定下一阶段（如第二只舵机、情绪动作联动或 Wi-Fi 接入）；这些候选尚未排期。
+**当前下一步：由用户决定下一阶段。** 实验 005 已通过软件检查、烧录校验和 2026-11-07 的用户实物验收，并以提交 [c9c4238](https://github.com/Sprouting123/ai-desktop-robot/commit/c9c4238998e81b5dbca59abb80ebf314a4366eee) 推送至 `origin/main`。可选方向包括第二只舵机、情绪动作联动或 Wi-Fi 接入；这些候选尚未排期，启动前需先明确供电、接线与验收标准。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -167,7 +167,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 实验 003 第一阶段通信验收：Wire 扫描、三环境构建、烧录校验、52 项实机检查，两次 0x3C 应答；权限阻塞已解除 | [实验 003](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 | 2026-11-07 | 实验 003 第二阶段：增加 U8g2 双驱动串口切换和测试图；最终构建、烧录和 65 项串口检查通过，SH1106 用户实物确认通过，SSD1306 用户反馈异常，默认保留 SH1106 | [实验 003 第二阶段](experiments/003-i2c-scan.md)；实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核验 |
 | 2026-11-07 | 实验 004：OLED 表情引擎 V1.0，十种表情、眨眼、状态查询、非阻塞状态机与增量刷新；三环境构建、烧录校验、244 项串口/软件检查通过，用户实物确认十种表情与眨眼均正常 | [实验 004](experiments/004-oled-eyes.md)；实现与验收提交 [5c98271](https://github.com/Sprouting123/ai-desktop-robot/commit/5c98271bdfa9d6b9740b3d53537210cf49db8ce6) 已推送并核对一致 |
-| 2026-11-07 | 实验 005：SG90 单舵机控制，GPIO4、50Hz LEDC（S3 14 位）、60–120° 软件限位、非阻塞渐进运动与 `servo stop` 放松策略；三环境构建、烧录校验、348 项串口/软件检查及 2 分钟连续运行通过；用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，记为已验收 | [实验 005](experiments/005-servo.md)；实现尚未提交 |
+| 2026-11-07 | 实验 005：SG90 单舵机控制，GPIO4、50Hz LEDC（S3 14 位）、60–120° 软件限位、非阻塞渐进运动与 `servo stop` 放松策略；三环境构建、烧录校验、348 项串口/软件检查及 2 分钟连续运行通过；用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，记为已验收 | [实验 005](experiments/005-servo.md)；实现与验收提交 [c9c4238](https://github.com/Sprouting123/ai-desktop-robot/commit/c9c4238998e81b5dbca59abb80ebf314a4366eee) 已推送并核对一致 |
 
 ## 维护方法
 
