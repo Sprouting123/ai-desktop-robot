@@ -17,7 +17,7 @@
 - **实验 008 已验收（2026-11-08 用户报告测试通过）：** 新增非阻塞 Wi-Fi STA、受限 HTTP API 与手机控制页。三环境构建通过；`scripts/test_serial_wifi.py` 在 Wi-Fi 凭据为空的固件上 910 项、临时不可达 SSID 固件上 903 项（HTTP 跳过）检查通过。2026-11-08 用户填入家庭 2.4GHz 凭据后，设备实测 `WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`，`GET /` 返回 200（8980 字节），`GET /api/status` 返回合法 JSON；完整回归（含 HTTP 401/403/405/413/429 限流、令牌不进响应、`wifi reconnect` 后 HTTP 恢复）**1038 项全部通过**。测试期间外部 5V 接通并由用户授权驱动舵机；2026-11-08 用户报告浏览器/手机页面与远程控制测试通过，记为已验收，证据为用户观察（未细分项目、未做定量测量）。见[实验 008](experiments/008-wifi-control.md)。
 - **实验 009 第一阶段已验收（2026-11-08 用户确认首次发声）：** 新增独立 `src/audio_engine.h/.cpp`，用 ESP-IDF legacy I²S TX 驱动（GPIO7 BCLK / GPIO15 LRC / GPIO6 DIN）驱动 MAX98357A；16kHz、16bit、立体声同行样本、4×240 帧 DMA、880Hz/300ms、15% 幅度、5ms 淡入淡出；`i2s_write(...,0)` 非阻塞，上电只初始化不发声。新增 `audio beep|stop|status`。排查发现开发板 `5Vin` 是输入引脚、不能给功放供电（实测约 2V）；改由与舵机共用的外部 5V 给 VIN/SD 供电并共地后，用户发送 `audio beep` 确认听到提示音。见[实验 009](experiments/009-audio-output.md)。
 - **实验 009 第二阶段：已验收（2026-11-08 用户试听成功）。** 用 Edge TTS（免费、非官方 Microsoft 接口）在本机生成“你好，我是你的 AI 桌宠！”，声音 `zh-CN-XiaoxiaoNeural`、语速 −5%，转成 16kHz/16bit/单声道裸 PCM（78,828 字节、2.463s），经 `board_build.embed_files` 只读链接进 flash；新增 `Source`/`ToneSource`/`FlashClipSource` 与 `audio hello`，每次只 `memcpy_P` 读取 240 帧，不整段复制到 RAM；修正 `i2s_write` 部分写入时按 `int16_t*` 偏移的字节指针错误，并新增自然结束 drain（约 80ms）避免尾音被 DMA 清零截断。三环境构建通过（Flash 914,909 字节、静态 RAM 52,328 字节），烧录校验通过，完整回归 **1103 项通过**（外部 5V 断开）。未产生付费 API 调用；上电不自动播放。2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功，记为已验收（证据为用户观察，未逐项说明句尾、爆音与音量，未做定量测量）。
-- **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
+- **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。实验 009 第二阶段的实现、测试、文档与语音资源提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 于 2026-11-08 推送，`git ls-remote` 核对远程与本地一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
 - 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[009-audio-output.md](experiments/009-audio-output.md)；前置实验：[008-wifi-control.md](experiments/008-wifi-control.md)、[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
@@ -230,14 +230,14 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 009 非阻塞 | 软件已检查 | 分块状态机与 `i2s_write(...,0)`；回归中播放与动作/串口并行通过 |
 | 实验 009 第一阶段 Git 同步 | 已完成 | 实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 | 实验 009 第二阶段听音 | 已验收（用户观察） | 2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功；未逐项说明句尾完整性、爆音与音量，未做定量测量 |
-| 实验 009 第二阶段音频资源 | 已生成，未提交 | `assets/audio/hello_zh.raw` 由 Edge TTS 生成；Edge TTS 为非官方接口，资源仅用于本项目实验，公开分发前需用户确认或改用许可明确的 TTS |
-| 实验 009 第二阶段 Git 同步 | 未完成 | 等待用户明确授权后提交与推送；不得提交凭据或 `work/` 下的临时文件 |
+| 实验 009 第二阶段音频资源 | 已入库（用户授权） | `assets/audio/hello_zh.raw` 由 Edge TTS 生成并随本阶段提交；Edge TTS 为非官方接口，资源仅用于本项目实验，公开再分发前需用户确认或改用许可明确的 TTS |
+| 实验 009 第二阶段 Git 同步 | 已完成 | 实现、测试、文档与语音资源提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：等待 Git 提交与推送授权。** 实验 009 第二阶段已完成构建、烧录、1103 项回归与用户听音验收；提交内容需经用户确认，包括是否把生成的 `assets/audio/hello_zh.raw` 一并入库。后续可选：在安静环境评估音量与音质、测量功放与舵机同时工作时的外部 5V 电压、用 2.46 s 的 `audio hello` 补做播放中 `audio stop` 的实物观察。烧录和自动测试期间外部 5V 仍需断开；出现爆音、异常发热或电压下跌立即断开外部 5V。
+**当前下一步：实验 009 第二阶段已验收并同步，下一阶段待规划。** 构建、烧录、1103 项回归、用户听音与 Git 推送均已完成。后续可选：在安静环境评估音量与音质、测量功放与舵机同时工作时的外部 5V 电压、用 2.46 s 的 `audio hello` 补做播放中 `audio stop` 的实物观察。烧录和自动测试期间外部 5V 仍需断开；出现爆音、异常发热或电压下跌立即断开外部 5V。
 
 实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
@@ -274,7 +274,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 009 第一阶段：新增 `AudioEngine` 与 `audio beep|stop|status`，ESP-IDF legacy I²S TX、16kHz/16bit/立体声、非阻塞分块播放、低幅度 880Hz/300ms 提示音；三环境构建通过，烧录后 `--no-audio-sound` 完整回归 1050 项通过；首次实际发声待用户观察 | [实验 009](experiments/009-audio-output.md)；首次提示音保留给用户 |
 | 2026-11-08 | 实验 009 首次发声验收：排查确认开发板 `5Vin` 为输入、不能给功放供电；改用与舵机共用的外部 5V 并共地后，用户确认听到提示音；完整回归 1075 项通过 | [实验 009](experiments/009-audio-output.md)；实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送；证据为用户观察 |
 | 2026-11-08 | 实验 009 第二阶段软件完成：Edge TTS 生成中文语音，内嵌 flash 播放，新增 `audio hello` 与 `Source` 抽象；修正字节指针偏移、加入自然结束 drain；三环境构建、烧录与 1103 项回归通过（外部 5V 断开） | [实验 009](experiments/009-audio-output.md)；音频资源与转换说明见 `assets/audio/README.md` |
-| 2026-11-08 | 实验 009 第二阶段听音验收：用户接通外部 5V、未同时驱动舵机，发送 `audio hello` 报告试听成功；第二阶段记为已验收（证据为用户观察） | [实验 009](experiments/009-audio-output.md)；尚未提交，等待 Git 授权 |
+| 2026-11-08 | 实验 009 第二阶段听音验收：用户接通外部 5V、未同时驱动舵机，发送 `audio hello` 报告试听成功；第二阶段记为已验收（证据为用户观察） | [实验 009](experiments/009-audio-output.md)；提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 已推送并核对一致 |
 
 ## 维护方法
 
