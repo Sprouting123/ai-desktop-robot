@@ -19,10 +19,11 @@
 - **实验 009 第二阶段：已验收（2026-11-08 用户试听成功）。** 用 Edge TTS（免费、非官方 Microsoft 接口）在本机生成“你好，我是你的 AI 桌宠！”，声音 `zh-CN-XiaoxiaoNeural`、语速 −5%，转成 16kHz/16bit/单声道裸 PCM（78,828 字节、2.463s），经 `board_build.embed_files` 只读链接进 flash；新增 `Source`/`ToneSource`/`FlashClipSource` 与 `audio hello`，每次只 `memcpy_P` 读取 240 帧，不整段复制到 RAM；修正 `i2s_write` 部分写入时按 `int16_t*` 偏移的字节指针错误，并新增自然结束 drain（约 80ms）避免尾音被 DMA 清零截断。三环境构建通过（Flash 914,909 字节、静态 RAM 52,328 字节），烧录校验通过，完整回归 **1103 项通过**（外部 5V 断开）。未产生付费 API 调用；上电不自动播放。2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功，记为已验收（证据为用户观察，未逐项说明句尾、爆音与音量，未做定量测量）。
 - **实验 010 第一阶段：已验收（2026-11-08 用户讲话观察）。** 新增 `src/microphone_engine.h/.cpp`：INMP441 使用 `I2S_NUM_1` RX、SCK GPIO16 / WS GPIO17 / SD GPIO18、16kHz/32bit 槽、4×256 帧 DMA；上电不安装驱动、不采集，`mic start` 才初始化，`mic stop` 用 `i2s_stop()` 停止；`mic status`/`mic level` 输出近期 0.5s 窗口峰值、RMS、采样计数与 `signal=ok|zero|no_data|idle`。三环境构建通过（`rgb_gpio48` Flash 918,361 字节、静态 RAM 54,204 字节），烧录校验通过，含麦克风检查的完整回归左声道版本 **1152 项**、右声道版本 **1151 项**通过（Wi-Fi 已连接含 HTTP，外部 5V 断开；计数差 1 来自舵机轮询时机，非失败项）。实测左声道全零、右声道有正常数据；用户核对并确认接线正确后，固件改为 `I2S_CHANNEL_FMT_ONLY_RIGHT` 并重新烧录，回归中 `signal=ok`（peak≈1,342,808、rms≈1,010,716）。用户随后在串口监视器实测：安静时 peak 163,042（1%）、说话时 526,968–536,016（6%），`mic stop` 后帧计数冻结在 7,370,496；第一阶段记为已验收（证据为用户提供的读数，未做定量测量），见[实验 010](experiments/010-microphone.md)。
 - **实验 010 第二阶段：已验收（2026-11-08 用户试听）。** 新增 `mic record`/`mic dump`：固定 3.000 秒（48,000 帧、96,000 字节）16kHz/16bit/单声道录音，缓冲优先 PSRAM、复位后丢失；每次开始采集先丢弃 8,000 帧启动瞬态；录满后计算 CRC-32（与 Python `zlib.crc32` 一致）、停止 RX 并进入 `record=ready`；`mic dump` 按每行 48 字节、共 2,000 行非阻塞输出，带偏移、长度与 CRC 校验。新增 `scripts/capture_mic_wav.py`：核对设备、倒计时、录音、传输、逐行/长度/CRC 校验，30Hz 去直流后做峰值归一化并写入 `work/mic-*.wav`。三环境构建通过（`rgb_gpio48` Flash 920,009 字节、静态 RAM 54,236 字节），烧录 920,368 字节且 `Hash of data verified`，完整回归 **1187 项通过**（Wi-Fi 含 HTTP，外部 5V 断开）。最终样本 `work/mic-20261108-181323.wav`（CRC `ac9af219`，原始峰值 6,844、去直流后 4,825/14.7%、增益 ×4.75）有效语音约 0.62–1.25 秒，用户试听后确认“能听清说话内容”，第二阶段记为已验收（证据为用户听感，未做定量测量；WAV、诊断脚本与日志在本机 `work/`，未入库）。见[实验 010](experiments/010-microphone.md) 第 7、8 节。
+- **实验 011-1 本地 ASR：已验收（识别部分）。** 在独立 `work/asr-venv`（torch 2.14.1+cpu、FunASR 1.4.24、ModelScope 1.40.2）中用 CPU 运行 Paraformer-large（ModelScope `iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch`，Apache 2.0，模型目录 848 MiB）；新增 `scripts/asr_local.py`，本阶段不修改固件、不调用付费 API、不上传录音。`work/mic-20261108-181323.wav`（3.000 秒）识别为“一二三”，模型加载 2.76 s、推理 0.10 s、RTF 0.034、峰值 RSS 2,261 MB；已知内容 TTS 对照“你好，我是你的 AI 桌宠！”识别为“你好我是你的ai捉宠”（仅“桌”→“捉”）。2026-11-08 用户确认录音中实际能听到的就是“一二三”，识别正确；用户此前还说了几个字但未被录到，原因是旧提示从倒计时“3”开始说话、录音开始前约 2.5 秒被截掉。`capture_mic_wav.py` 已改为录音启动 0.6 秒后提示 `>>> SPEAK NOW`，尚未重录验证。见[实验 011](experiments/011-asr.md)。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。实验 009 第二阶段的实现、测试、文档与语音资源提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 于 2026-11-08 推送，`git ls-remote` 核对远程与本地一致。实验 010 第二阶段的固件、测试脚本、WAV 导出脚本与文档提交 [78b74fc](https://github.com/Sprouting123/ai-desktop-robot/commit/78b74fc0895c163dbcf0b61523a68394f9521ae0) 于 2026-11-08 经用户确认后推送，`git ls-remote` 核对远程与本地一致；样本 WAV 与 `work/` 诊断资料未入库。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
-- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[010-microphone.md](experiments/010-microphone.md)；前置实验：[009-audio-output.md](experiments/009-audio-output.md)、[008-wifi-control.md](experiments/008-wifi-control.md)、[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
+- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[011-asr.md](experiments/011-asr.md)；前置实验：[010-microphone.md](experiments/010-microphone.md)、[009-audio-output.md](experiments/009-audio-output.md)、[008-wifi-control.md](experiments/008-wifi-control.md)、[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
 
 ## 长期目标与协作方式
 
@@ -50,6 +51,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 008：Wi-Fi 与局域网控制 | 已验收 | 三环境构建通过；凭据为空 910 项、不可达 SSID 903 项通过；2026-11-08 真实联网成功（IP 192.168.31.17、RSSI -40）且含 HTTP 的完整回归 1038 项通过；用户报告浏览器/手机页面与远程控制测试通过，证据为用户观察，见[实验 008](experiments/008-wifi-control.md) |
 | 实验 010：INMP441 麦克风采集与录音 | 已验收（两阶段） | 第一阶段：三环境构建、烧录与回归通过（左声道 1152 项、右声道 1151 项）；`I2S_NUM_1` RX、GPIO16/17/18、16kHz/32bit 槽、非阻塞 DMA、`mic status/start/level/stop`；实测数据只在右声道，固件改为右声道；用户讲话观察安静 peak 1% → 说话 peak 6%。第二阶段：`mic record`/`mic dump` 固定 3 秒录音、CRC-32 校验传输与 `capture_mic_wav.py` WAV 导出；三环境构建、烧录哈希校验、1187 项回归通过（外部 5V 断开）；2026-11-08 用户试听最终 WAV 确认能听清说话内容。未做定量音频测量，见[实验 010](experiments/010-microphone.md) |
 | 实验 009：MAX98357A I²S 音频 | 已验收 | 第一阶段：2026-11-08 用户确认听到提示音，完整回归 1075 项通过。第二阶段：内嵌 Edge TTS 中文语音与 `audio hello`，三环境构建、烧录与 1103 项完整回归通过（外部 5V 断开），用户接通外部 5V 后报告试听成功；音质与供电余量未测量，见[实验 009](experiments/009-audio-output.md) |
+| 实验 011：本地中文语音识别（ASR） | 已验收（识别部分；录音起始截断） | 独立 `work/asr-venv` 中 CPU 运行 FunASR Paraformer-large（ModelScope，Apache 2.0，模型目录 848 MiB）；新增 `scripts/asr_local.py`，不改固件、不调用付费 API、不上传录音。最终录音 `mic-20261108-181323.wav` 识别为“一二三”，模型加载 2.76 s、推理 0.10 s、RTF 0.034、峰值 RSS 2,261 MB；已知 TTS 对照有一处同音字错误（桌→捉）。2026-11-08 用户确认录音中实际能听到的就是“一二三”，识别正确；其前面还说了几个字但未被录到，属录音起始截断。见[实验 011](experiments/011-asr.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
 
@@ -73,6 +75,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 局域网控制 | HTTP 80 端口、明文，仅限可信家庭局域网；写操作需 `X-Auth-Token`；禁止公网端口映射或不受控 AP |
 | INMP441 麦克风（用户报告接线 + 2026-11-08 实测） | VDD → 3V3、GND → GND、SCK → GPIO16、WS → GPIO17、SD → GPIO18、L/R → GND；不得接 5V。用户已确认接线正确；该模块数据实际只在右声道槽，固件改为读取右声道 |
 | MAX98357A 功放（用户报告 + 2026-11-08 实测） | VIN、SD → 外部 5V 正极（与两只 SG90 共用，标称 5V 5A）；GND → 外部 5V 负极并与 ESP32 共地；DIN → GPIO6、BCLK → GPIO7、LRC → GPIO15；GAIN 悬空；扬声器只接 SPK+/SPK−，不得接 GND。开发板 `5Vin` 为输入、不能对外供电（实测约 2V）；带载能力与并发电流未测量；模块型号未鉴定 |
+| 本地 ASR 主机（2026-11-08） | Ubuntu、i5-12400F（6 核 12 线程）、15 GiB RAM、无 NVIDIA GPU；独立 `work/asr-venv`（torch 2.14.1+cpu、FunASR 1.4.24、ModelScope 1.40.2，约 1.7 GiB）；模型 `iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch`（Apache 2.0，约 848 MiB）缓存在 `work/models`；仅主机端，不参与固件 |
 
 用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；实验 009 已完成 MAX98357A 的接线、供电排查、首次发声与内嵌中文语音试听验收；INMP441 等其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
 
@@ -212,11 +215,22 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 第二阶段（3 秒录音与 WAV）：
 
 - 固件：`mic record` 首次分配 96,000 字节（优先 PSRAM，失败退回内部堆），丢弃 8,000 帧（0.5 秒）启动瞬态后录 48,000 帧；完成后 CRC-32、`i2s_stop()`、`record=ready`。`mic dump` 每行 48 字节、2,000 行，带偏移/长度/CRC，`Serial.availableForWrite()` 不足时下一轮再发。录音中 `mic start/record/dump` 返回 `ERR mic_recording`，dump 中返回 `ERR mic_dump_busy`，录音中 `mic stop` 丢弃本次录音。
-- 主机：`scripts/capture_mic_wav.py` 核对设备身份，默认 5 秒倒计时（提示数到 3 开始说话），等待 `MIC_RECORD_DONE` 后 dump，校验 2,000 行偏移、96,000 字节与 `zlib.crc32`，30Hz 一阶高通去直流，峰值归一化到 70% 满量程（增益上限 64×），写 16kHz/16bit/单声道 WAV 到 `work/`。
+- 主机：`scripts/capture_mic_wav.py` 核对设备身份，默认 5 秒倒计时（只用于准备），发送 `mic record` 并等待 0.6 秒后提示 `>>> SPEAK NOW`，等待 `MIC_RECORD_DONE` 后 dump，校验 2,000 行偏移、96,000 字节与 `zlib.crc32`，30Hz 一阶高通去直流，峰值归一化到 70% 满量程（增益上限 64×），写 16kHz/16bit/单声道 WAV 到 `work/`。2026-11-08 实验 011 发现旧提示“数到 3 开始说话”会截掉开头约 2.5 秒，故改为当前提示；新流程尚未重录验证。
 - 诊断：复位后立即录音的前约 0.4–0.5 秒为满幅衰减伪影，预启动 2 秒后消失，因此加入 settle 丢弃；原始波形有数个百分点满量程的直流偏置与慢漂移，主机 30Hz 高通去除；1kHz 声音测试在 1000Hz 处出现幅度约 816 的峰值（相邻频点 2–5）；`mic level` 安静峰值 4–5%，5–10cm 大声说话依次出现 53%/24%/14%/12%。此前“只有噪声”的样本经实时电平对比，判断与说话太轻、太远或起录太晚有关。
 - 构建与烧录：`diagnostics` Flash 916,641 字节 / RAM 54,188 字节；`rgb_gpio48` 与 `rgb_gpio38` Flash 920,009 字节 / RAM 54,236 字节。烧录 920,368 字节，`Hash of data verified`。
 - 回归：外部 5V 断开、Wi-Fi 已连接，`scripts/test_serial_wifi.py` **1187 项通过**（含 HTTP、录音状态、传输与 CRC 检查），无复位。日志在本机 `work/regression-010-phase2d.log`，被 Git 忽略。
 - 试听：`work/mic-20261108-181323.wav`，3.000 秒，固件 CRC `ac9af219`，原始峰值 6,844，去直流后 4,825（14.7%），增益 ×4.75；有效语音约 0.62–1.25 秒。用户确认“能听清说话内容”，第二阶段记为已验收（证据为用户听感；灵敏度、噪声底、频响、失真与声压级未测量；WAV 与诊断资料未入库）。
+
+## 实验 011 的验证摘要
+
+- 方案：FunASR Paraformer-large，模型 ID `iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch`，来源 ModelScope，Apache 2.0；下载前说明约 889 MB，实际模型目录 848 MiB（`model.pt` 880,502,012 字节、`seg_dict` 8,287,834 字节），10 个文件约 30 秒下载完成。
+- 环境：独立 `work/asr-venv`（约 1.7 GiB），torch 2.14.1+cpu、torchaudio 2.11.1+cpu、funasr 1.4.24、modelscope 1.40.2、soundfile 0.14.0；`MODELSCOPE_CACHE=work/models`；运行 `env -u PYTHONPATH`，未改动 PlatformIO `.venv`。
+- 脚本：新增 `scripts/asr_local.py`，校验 PCM/16 kHz/16 bit/单声道，保持原始输入；输出模型、时长、加载/推理耗时、RTF、CPU 时间与平均核数、峰值 RSS、识别文本与错误原因；失败退出码 1。
+- 识别：`work/mic-20261108-181323.wav`（3.000 秒，10 ms 窗有效语音约 0.46 秒）→ **“一二三”**；缓存后模型加载 2.65–2.78 秒，推理 0.10–0.11 秒，RTF 0.032–0.035，CPU user 0.37–0.40 秒（约 3.8–3.9 核），峰值 RSS 2,254.5–2,270.4 MB；首次运行加载 33.00 秒（含下载）。
+- 对照：其余 5 个无有效语音的录音输出 `啊`、`right is`、`the the the知嗯` 等无意义文本，说明模型会在静音/弱语音上“脑补”；已知内容 TTS“你好，我是你的 AI 桌宠！”识别为“你好我是你的ai捉宠”，仅“桌”误为同音“捉”，未输出标点。
+- 验收：2026-11-08 用户确认录音中实际能听到的就是“一二三”，ASR 识别正确；用户此前还说了几个字但没有被录到。原因是旧提示让用户从倒计时“3”开始说话，而 `mic record` 在倒计时结束后才启动、固件还丢弃 0.5 秒，开头约 2.5 秒落在录音窗口外。该截断属于录音流程问题，不是 ASR 漏识。
+- 修正：`scripts/capture_mic_wav.py` 改为主机在 `mic record` 启动 0.6 秒后提示 `>>> SPEAK NOW`，用户从提示出现时开始说；本次只改主机提示时序，未改固件，尚未用新流程重录验证。
+- 范围：本阶段未修改 ESP32 固件，未调用付费 API，未上传录音，模型/venv/WAV/日志均在 `work/` 并被 Git 忽略。验收只覆盖“对已录制音频的识别”，录音完整性与整句识别待重录。
 
 ## 未决事项与已解决问题
 
@@ -257,12 +271,18 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 010 音频定量指标 | 未测量 | 灵敏度、噪声底、频响、失真、声压级、3V3 供电余量与长时间稳定性均无数据；录音中的爆音与削波未评估 |
 | 实验 010 录音文件归档 | 未入库 | WAV、`work/` 下的诊断脚本与回归日志只在本机并被 Git 忽略；是否入库或分发需用户明确同意 |
 | 实验 010 第二阶段 Git 同步 | 已完成 | 2026-11-08 经用户确认，固件、测试脚本、WAV 导出脚本与文档提交 [78b74fc](https://github.com/Sprouting123/ai-desktop-robot/commit/78b74fc0895c163dbcf0b61523a68394f9521ae0) 已推送至 `origin/main`；`git ls-remote` 核对一致；样本 WAV 与 `work/` 资料未入库 |
+| 实验 011 识别文字确认 | 已完成（用户确认） | 2026-11-08 用户确认 `work/mic-20261108-181323.wav` 中能听到的就是“一二三”，ASR 输出与之一致；实验 011-1 的识别部分记为已验收 |
+| 实验 011 录音起始截断 | 原因已定位，修正待验证 | 用户先说几个字、WAV 只从“一二三”开始；旧提示从倒计时“3”开始说话，距 `mic record` 启动约 2 秒，加 0.5 秒启动瞬态，开头被截掉。`scripts/capture_mic_wav.py` 已改为录音启动 0.6 秒后提示 `>>> SPEAK NOW`，尚未重录验证 |
+| 实验 011 有效语音长度 | 已知限制 | 最终样本有效语音约 0.46 秒，且开头被截断，只覆盖短句；需按新提示重录完整的 3 秒（建议 5–10 秒）语音，才能评估连续语音、长句、数字与专有名词 |
+| 实验 011 静音/弱语音误输出 | 已知限制 | 多个无有效语音的录音输出 `the the the知嗯`、`right is` 等；后续在主机侧加能量门限或 FunASR `fsmn-vad`，不能把非空输出当作识别成功 |
+| 实验 011 资源与归档 | 本机保存、未入库 | 模型缓存 `work/models` 848 MiB、虚拟环境 `work/asr-venv` 约 1.7 GiB、录音与日志都在 `work/`，被 Git 忽略；是否分发模型或录音需用户明确同意 |
+| 实验 011 Git 同步 | 未提交 | 按用户要求，提交与推送前先征求确认；`scripts/asr_local.py` 与新文档尚未提交 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：由用户决定实验 011 的方向。** 实验 010 第二阶段已于 2026-11-08 通过三环境构建、烧录哈希校验、1187 项回归和用户试听验收，代码与文档已提交 [78b74fc](https://github.com/Sprouting123/ai-desktop-robot/commit/78b74fc0895c163dbcf0b61523a68394f9521ae0) 并推送；样本 WAV、诊断脚本与回归日志只在本机 `work/`，未入库。候选方向包括本地离线语音识别、录音回放/更长录音、唤醒词或云端 AI 对接；开始前需由用户明确目标、本地/云端方案、隐私边界与失败处理，任何付费 API 调用需用户事先明确授权。
+**当前下一步：按新提示重录一段完整语音，验证录音起始与整句识别。** 实验 011-1 的识别部分已获用户确认：`work/mic-20261108-181323.wav` 中能听到的内容为“一二三”，ASR 输出与之一致；模型加载 2.76 s、推理 0.10 s、RTF 0.034、峰值 RSS 2,261 MB（详见[实验 011](experiments/011-asr.md)）。用户同时说明“一二三”之前还说了几个字但未被录到；`scripts/capture_mic_wav.py` 已改为录音启动 0.6 秒后提示 `>>> SPEAK NOW`，请用户下次从该提示出现时开始说，并记录实际说的句子，用于核对整句识别。随后建议把录音延长到 5–10 秒，并在主机侧评估能量门限/`fsmn-vad`、`ct-punc` 标点与命令词热词；任何付费 API 调用仍需用户事先明确授权。实验 010 第二阶段的代码与文档已提交 [78b74fc](https://github.com/Sprouting123/ai-desktop-robot/commit/78b74fc0895c163dbcf0b61523a68394f9521ae0) 并推送，样本 WAV 与 `work/` 资料未入库。
 
 实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
@@ -307,6 +327,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 010 第二阶段实现：新增 `mic record`/`mic dump`，3.000 秒 PSRAM 录音、8,000 帧启动瞬态丢弃、CRC-32 校验、2,000 行非阻塞传输；新增 `scripts/capture_mic_wav.py`（设备核对、30Hz 去直流、峰值归一化、WAV 输出）与回归检查；三环境构建通过 | [实验 010](experiments/010-microphone.md) 第 7 节；样本与本机日志在 `work/`，被 Git 忽略 |
 | 2026-11-08 | 实验 010 第二阶段验收证据：烧录 920,368 字节且哈希校验通过，完整回归 1187 项通过（Wi-Fi 含 HTTP、外部 5V 断开）；诊断确认启动瞬态与直流偏置并修正；用户试听 `mic-20261108-181323.wav`（CRC `ac9af219`）确认能听清说话内容，第二阶段记为已验收 | [实验 010](experiments/010-microphone.md) 第 8 节；证据为用户听感，未做定量音频测量 |
 | 2026-11-08 | 实验 010 第二阶段经用户确认提交并推送：固件、回归脚本、`capture_mic_wav.py` 与文档；`git ls-remote` 核对本地与远程一致；WAV 与 `work/` 资料未入库 | 提交 [78b74fc](https://github.com/Sprouting123/ai-desktop-robot/commit/78b74fc0895c163dbcf0b61523a68394f9521ae0) |
+| 2026-11-08 | 实验 011-1 本地 ASR：独立 `work/asr-venv` 中 CPU 运行 FunASR Paraformer-large（ModelScope，Apache 2.0，模型缓存 848 MiB）；新增 `scripts/asr_local.py`；最终录音识别为“一二三”（加载 2.76 s、推理 0.10 s、RTF 0.034、峰值 RSS 2,261 MB），已知 TTS 对照有一处同音字错误；未改固件、未调用付费 API、未上传录音 | [实验 011](experiments/011-asr.md)；模型、venv、录音与日志在 `work/`，被 Git 忽略；尚未提交 |
+| 2026-11-08 | 实验 011-1 识别验收与录音提示修正：用户确认录音中能听到的就是“一二三”，ASR 识别正确；其前面几个字未被录到，定位为旧提示从倒计时“3”开始说话导致开头约 2.5 秒被截断。`scripts/capture_mic_wav.py` 改为主机在录音启动 0.6 秒后提示 `>>> SPEAK NOW`；新流程待重录验证 | [实验 011](experiments/011-asr.md) 5.2、6、7、9；[实验 010](experiments/010-microphone.md) 7.4、8.3、8.4；尚未提交 |
 
 ## 维护方法
 

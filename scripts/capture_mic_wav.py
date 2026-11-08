@@ -29,6 +29,9 @@ DEFAULT_OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "work"
 RECORD_FRAMES = 48000
 RECORD_BYTES = RECORD_FRAMES * 2
 SAMPLE_RATE = 16000
+# The firmware discards the first 0.5 s after starting the RX stream to skip
+# the startup transient. Wait past it before telling the user to speak.
+SETTLE_WAIT_S = 0.6
 DONE_RE = re.compile(
     r"MIC_RECORD_DONE frames=48000 bytes=96000 sample_rate_hz=16000 "
     r"sample_format=s16le channels=1 crc32=([0-9a-f]{8})")
@@ -117,18 +120,19 @@ def main():
         read_until(port, "OK mic=stopped", 1.0)
 
         if args.delay > 0:
-            print(f"Countdown {args.delay:.0f} s. Start speaking out loud when "
-                  f"the count reaches 3, and keep talking until "
-                  f"'recording finished' appears.", flush=True)
+            print(f"Countdown {args.delay:.0f} s — get ready; do not speak yet.",
+                  flush=True)
             for remaining in range(int(args.delay), 0, -1):
                 print(f"  {remaining} ...", flush=True)
                 time.sleep(1.0)
 
         send(port, "mic record")
-        print(">>> RECORDING 3 s — keep talking ...", flush=True)
         reply = read_until(port, "OK mic=recording", 2.0)
         if "OK mic=recording frames=48000 duration_ms=3000" not in reply:
             raise SystemExit(f"mic record was refused:\n{reply.strip()}")
+        time.sleep(SETTLE_WAIT_S)
+        print(">>> SPEAK NOW — about 2.4 s left; keep talking until "
+              "'recording finished' appears.", flush=True)
         done_text = read_until(port, "MIC_RECORD_DONE", 8.0)
         done_lines = [line for line in done_text.splitlines()
                       if line.startswith("MIC_RECORD_DONE")]
