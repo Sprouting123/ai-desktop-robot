@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Record 3 s from the INMP441 and write a 16 kHz / 16 bit / mono WAV.
+"""Record 10 s from the INMP441 and write a 16 kHz / 16 bit / mono WAV.
 
 Run with .venv/bin/python scripts/capture_mic_wav.py after closing the serial
-monitor. The board must run the experiment 010 firmware. The script asks the
-firmware for a fixed 3 s recording (`mic record`), pulls it back with the
+monitor. The board must run the experiment 012 firmware. The script asks the
+firmware for a fixed 10 s recording (`mic record`), pulls it back with the
 non-blocking `mic dump` transfer, verifies every row offset and the firmware
 CRC32, then writes a WAV file under work/ by default.
 
@@ -26,29 +26,37 @@ from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
 DEFAULT_OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "work"
-RECORD_FRAMES = 48000
+RECORD_FRAMES = 160000
 RECORD_BYTES = RECORD_FRAMES * 2
 SAMPLE_RATE = 16000
+LINE_BYTES = 50
 # The firmware discards the first 0.5 s after starting the RX stream to skip
 # the startup transient. Wait past it before telling the user to speak.
 SETTLE_WAIT_S = 0.6
 DONE_RE = re.compile(
-    r"MIC_RECORD_DONE frames=48000 bytes=96000 sample_rate_hz=16000 "
+    r"MIC_RECORD_DONE frames=160000 bytes=320000 sample_rate_hz=16000 "
     r"sample_format=s16le channels=1 crc32=([0-9a-f]{8})")
 BEGIN_RE = re.compile(
-    r"PCM_BEGIN bytes=96000 frames=48000 sample_rate_hz=16000 format=s16le "
+    r"PCM_BEGIN bytes=320000 frames=160000 sample_rate_hz=16000 format=s16le "
     r"channels=1 crc32=([0-9a-f]{8}) line_bytes=(\d+)")
 LINE_RE = re.compile(r"PCM ([0-9a-f]{6}) ([0-9a-f]+)")
-END_RE = re.compile(r"PCM_END lines=(\d+) bytes=96000 crc32=([0-9a-f]{8})")
+END_RE = re.compile(r"PCM_END lines=(\d+) bytes=320000 crc32=([0-9a-f]{8})")
 
 
 def read_until(port, marker, timeout):
-    """Read serial text until a line starts with marker, or time out."""
+    """Read serial text until the marker's line is complete, or time out.
+
+    A marker can arrive in a serial read chunk before its newline, so waiting
+    only for the marker bytes can return a truncated line. Wait for a newline
+    after the marker so the following regex sees the whole record.
+    """
     deadline = time.monotonic() + timeout
     data = bytearray()
+    needle = marker.encode()
     while time.monotonic() < deadline:
         data.extend(port.read(port.in_waiting or 1))
-        if marker.encode() in data:
+        index = data.find(needle)
+        if index >= 0 and b"\n" in data[index:]:
             break
     return data.decode("utf-8", errors="replace")
 
@@ -128,12 +136,12 @@ def main():
 
         send(port, "mic record")
         reply = read_until(port, "OK mic=recording", 2.0)
-        if "OK mic=recording frames=48000 duration_ms=3000" not in reply:
+        if "OK mic=recording frames=160000 duration_ms=10000" not in reply:
             raise SystemExit(f"mic record was refused:\n{reply.strip()}")
         time.sleep(SETTLE_WAIT_S)
-        print(">>> SPEAK NOW — about 2.4 s left; keep talking until "
+        print(">>> SPEAK NOW — about 9.5 s left; keep talking until "
               "'recording finished' appears.", flush=True)
-        done_text = read_until(port, "MIC_RECORD_DONE", 8.0)
+        done_text = read_until(port, "MIC_RECORD_DONE", 16.0)
         done_lines = [line for line in done_text.splitlines()
                       if line.startswith("MIC_RECORD_DONE")]
         done = DONE_RE.fullmatch(done_lines[0]) if len(done_lines) == 1 else None
@@ -143,10 +151,10 @@ def main():
         firmware_crc = done.group(1)
         print("<<< recording finished; transferring ...", flush=True)
 
-        print("transferring 96000 bytes (about 20 s at 115200) ...",
+        print("transferring 320000 bytes (about 60 s at 115200) ...",
               flush=True)
         send(port, "mic dump")
-        dump_text = read_until(port, "PCM_END", 60.0)
+        dump_text = read_until(port, "PCM_END", 120.0)
         lines = dump_text.splitlines()
         begin = next((BEGIN_RE.fullmatch(line) for line in lines
                       if line.startswith("PCM_BEGIN")), None)
@@ -154,6 +162,10 @@ def main():
                     if line.startswith("PCM_END")), None)
         if begin is None or end is None:
             raise SystemExit("transfer did not start or finish cleanly")
+        if int(begin.group(2)) != LINE_BYTES:
+            raise SystemExit(
+                f"firmware sends {begin.group(2)} bytes per line, "
+                f"expected {LINE_BYTES}")
         if begin.group(1) != firmware_crc or end.group(2) != firmware_crc:
             raise SystemExit("firmware checksums disagree between messages")
 
@@ -163,7 +175,7 @@ def main():
             if match:
                 rows.append((int(match.group(1), 16),
                              bytes.fromhex(match.group(2))))
-        expected_offsets = list(range(0, RECORD_BYTES, 48))
+        expected_offsets = list(range(0, RECORD_BYTES, LINE_BYTES))
         if [offset for offset, _ in rows] != expected_offsets:
             raise SystemExit("transfer rows are missing, duplicated or out of order")
         payload = b"".join(data for _, data in rows)
@@ -199,7 +211,7 @@ def main():
         print(f"raw peak: {raw_peak}, after 30 Hz DC block: {peak:.0f} "
               f"({peak_pct:.1f}% of 16-bit full scale), gain x{gain:.2f}")
         print(f"WAV written: {out_path} "
-              f"(3.000 s, {SAMPLE_RATE} Hz, 16-bit mono)")
+              f"(10.000 s, {SAMPLE_RATE} Hz, 16-bit mono)")
     finally:
         port.close()
 

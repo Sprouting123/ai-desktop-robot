@@ -22,8 +22,8 @@ struct Config {
 
 constexpr uint16_t kBlockFrames = 256;  // 16 ms at 16 kHz; one non-blocking read.
 constexpr uint8_t kWindowBlocks = 32;   // About 0.5 s of recent statistics.
-constexpr uint32_t kSettleFrames = 8000;   // 0.5 s discarded after i2s_start.
-constexpr uint32_t kRecordFrames = 48000;  // Exactly 3.0 s at 16 kHz.
+constexpr uint32_t kSettleFrames = 8000;    // 0.5 s discarded after i2s_start.
+constexpr uint32_t kRecordFrames = 160000;  // Exactly 10.0 s at 16 kHz.
 constexpr uint32_t kRecordBytes = kRecordFrames * sizeof(int16_t);
 
 enum class RecordState : uint8_t { kIdle, kRecording, kReady };

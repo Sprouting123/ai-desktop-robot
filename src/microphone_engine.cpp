@@ -12,7 +12,7 @@ namespace {
 // value without any floating-point conversion.
 constexpr int32_t kFullScale = 8388608;  // 2^23
 constexpr uint32_t kIdleReportMs = 0;    // Read timeout 0: never wait for data.
-constexpr uint32_t kDumpBytesPerLine = 48;  // 96 hex characters per line.
+constexpr uint32_t kDumpBytesPerLine = 50;  // 100 hex characters per line.
 constexpr size_t kDumpLineBytes = 4 + 8 + 1 + 2 * kDumpBytesPerLine + 2;
 
 uint32_t percentOfFullScale(uint32_t value) {

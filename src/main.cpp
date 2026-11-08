@@ -744,7 +744,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 010] INMP441 microphone input / Arduino");
+  Serial.println("\n[experiment 012] INMP441 10-second recording / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
