@@ -3,7 +3,8 @@
 Run with .venv/bin/python scripts/test_serial_wifi.py after closing all
 monitors and with the servos' external 5 V supply disconnected. It regresses
 the experiment 002/003/004 commands, both servo channels, the motion/mood
-engine, the Wi-Fi/web serial status commands and the new audio commands. When
+engine, the Wi-Fi/web serial status commands and the audio commands, including the
+embedded `hello_zh` PCM clip. When
 the board is already connected to Wi-Fi and a token is available locally, it
 also exercises the HTTP API and the embedded control page. It resets this
 board and leaves the RGB LED off, both servo outputs disabled, audio silent and
@@ -38,7 +39,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "motion together | motion alternate | motion stop | motion status | "
         "mood happy | mood sad | mood angry | mood normal | mood status | "
         "mood stop | wifi status | wifi reconnect | web status | audio beep | "
-        "audio stop | audio status; max_line=32; endings=LF/CR/CRLF")
+        "audio hello | audio stop | audio status; max_line=32; "
+        "endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -86,12 +88,16 @@ WEB_RE = re.compile(
     r"WEB listening=([01]) port=80 requests=(\d+) writes=(\d+) "
     r"rejected=(\d+) rate_limited=(\d+) auth=(enabled|disabled)")
 AUDIO_RE = re.compile(
-    r"AUDIO state=(idle|playing|unavailable) ready=([01]) driver=i2s_std "
-    r"bclk=(\d+) lrck=(\d+) din=(\d+) rate_hz=(\d+) bits=16 channels=2 "
-    r"tone_hz=(\d+) duration_ms=(\d+) amplitude_pct=(\d+) plays=(\d+) "
-    r"stops=(\d+) errors=(\d+) last_error=(-?\d+)")
+    r"AUDIO state=(idle|playing|unavailable) ready=([01]) "
+    r"source=(tone|clip|none) clip=(\S+) bytes=(\d+) frames=(\d+) "
+    r"driver=i2s_std bclk=(\d+) lrck=(\d+) din=(\d+) rate_hz=(\d+) "
+    r"bits=16 channels=2 tone_hz=(\d+) duration_ms=(\d+) amplitude_pct=(\d+) "
+    r"plays=(\d+) stops=(\d+) errors=(\d+) last_error=(-?\d+)")
 AUDIO_BEEP = ("OK audio=beep tone_hz=880 duration_ms=300 amplitude_pct=15 "
               "restarted={0}")
+AUDIO_HELLO = ("OK audio=hello clip=hello_zh bytes=78828 frames=39414 "
+               "duration_ms=2463 volume_pct=60 sample_rate_hz=16000 "
+               "restarted={0}")
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
 # serial command window and are not a response to that command.
@@ -123,8 +129,9 @@ def main():
                         help="skip the Wi-Fi reconnect check")
     parser.add_argument(
         "--no-audio-sound", action="store_true",
-        help="skip the checks that make the speaker sound; the first tone must "
-             "be started by the user, so use this before the physical test")
+        help="skip the checks that make the speaker sound; the first tone and "
+             "voice must be started by the user, so use this before the "
+             "physical listening test")
     args = parser.parse_args()
     api_token = load_token(args.token_file)
     if api_token is not None and len(api_token) < 16:
@@ -422,32 +429,41 @@ def main():
               "AUDIO_INIT ready=1 driver=i2s_std port=0 bclk=7 lrck=15 din=6 "
               "rate_hz=16000 bits=16 channels=2 dma=4 x 240 frames "
               "tone_hz=880 duration_ms=300 amplitude_pct=15" in startup, True)
+        check("embedded voice clip metadata",
+              "AUDIO_CLIP name=hello_zh bytes=78828 frames=39414 "
+              "sample_rate_hz=16000 volume_pct=60" in startup, True)
         audio_boot = audio_status("boot audio is idle", "idle")
         check("boot audio driver is ready", audio_boot.group(2), "1")
+        check("boot audio has no active source",
+              (audio_boot.group(3), audio_boot.group(4),
+               audio_boot.group(5), audio_boot.group(6)),
+              ("none", "-", "0", "0"))
         check("audio uses the documented pins",
-              (audio_boot.group(3), audio_boot.group(4), audio_boot.group(5)),
+              (audio_boot.group(7), audio_boot.group(8), audio_boot.group(9)),
               ("7", "15", "6"))
         check("audio uses the standard first-test format",
-              (audio_boot.group(6), audio_boot.group(7),
-               audio_boot.group(8), audio_boot.group(9)),
+              (audio_boot.group(10), audio_boot.group(11),
+               audio_boot.group(12), audio_boot.group(13)),
               ("16000", "880", "300", "15"))
-        check("boot does not play a tone", audio_boot.group(10), "0")
+        check("boot does not play a tone", audio_boot.group(14), "0")
         check("boot audio reports no error",
-              (audio_boot.group(12), audio_boot.group(13)), ("0", "0"))
+              (audio_boot.group(16), audio_boot.group(17)), ("0", "0"))
         expect("audio needs a subcommand", b"audio\n",
                ["ERR audio_usage; use help"])
         expect("audio rejects unknown subcommands", b"audio play\n",
                ["ERR audio_usage; use help"])
         expect("audio rejects extra arguments", b"audio beep now\n",
                ["ERR audio_usage; use help"])
+        expect("audio hello rejects extra arguments", b"audio hello now\n",
+               ["ERR audio_usage; use help"])
         expect("audio stop is safe while idle", b"audio stop\n",
                ["OK audio=stopped output=silent"])
         check("a rejected audio command does not start playback",
-              audio_status("still idle after usage errors", "idle").group(10), "0")
+              audio_status("still idle after usage errors", "idle").group(14), "0")
 
         if args.no_audio_sound:
             print("SKIP audio playback checks (--no-audio-sound); the first "
-                  "tone must be started by the user", flush=True)
+                  "tone and voice must be started by the user", flush=True)
         else:
             # Short observation windows: the 300 ms tone must still be
             # streaming while these commands are answered, which also shows the
@@ -472,17 +488,66 @@ def main():
                    [AUDIO_BEEP.format("1")], 0.06)
             restarted = audio_status("restart keeps playing", "playing", 0.05)
             check("every trigger incremented the play counter",
-                  int(restarted.group(10)) >= 3, True)
+                  int(restarted.group(14)) >= 3, True)
             expect("audio stop interrupts playback", b"audio stop\n",
                    ["OK audio=stopped output=silent"])
             stopped = audio_status("audio stop returns to idle", "idle")
-            check("stop counter advanced", int(stopped.group(11)) >= 1, True)
+            check("stop counter advanced", int(stopped.group(15)) >= 1, True)
             check("audio errors stay at zero after stop",
-                  (stopped.group(12), stopped.group(13)), ("0", "0"))
+                  (stopped.group(16), stopped.group(17)), ("0", "0"))
             time.sleep(0.4)
             check("a stopped tone does not resume by itself",
-                  audio_status("still idle after wait", "idle").group(10),
-                  stopped.group(10))
+                  audio_status("still idle after wait", "idle").group(14),
+                  stopped.group(14))
+
+            # --- embedded voice clip --------------------------------------
+            # The clip is 2.463 s long, long enough for several commands to be
+            # answered while it streams.
+            expect("audio hello acknowledged", b"audio hello\n",
+                   [AUDIO_HELLO.format("0")], 0.06)
+            hello = audio_status("hello reports a clip source", "playing", 0.05)
+            check("hello source is the embedded clip",
+                  (hello.group(3), hello.group(4), hello.group(5),
+                   hello.group(6)),
+                  ("clip", "hello_zh", "78828", "39414"))
+            eyes_status("OLED answers while the voice plays")
+            motion_while_voice = [line for line in send(b"motion status\n", 0.06)
+                                  if line.startswith("MOTION ")]
+            check("motion answers while the voice plays",
+                  len(motion_while_voice), 1)
+            check("audio hello does not start a motion",
+                  motion_while_voice[0].split()[1].split("=")[1], "none")
+            expect("audio hello restarts while playing", b"audio hello\n",
+                   [AUDIO_HELLO.format("1")], 0.06)
+            check("repeated hello keeps the same clip length",
+                  audio_status("hello restart keeps playing", "playing",
+                               0.05).group(5), "78828")
+            expect("audio stop interrupts the voice", b"audio stop\n",
+                   ["OK audio=stopped output=silent"])
+            voice_stopped = audio_status("voice stop returns to idle", "idle")
+            check("stopping the voice clears the source",
+                  (voice_stopped.group(3), voice_stopped.group(4)),
+                  ("none", "-"))
+            time.sleep(0.5)
+            check("a stopped voice does not resume by itself",
+                  audio_status("voice still idle after wait", "idle").group(14),
+                  voice_stopped.group(14))
+
+            # A fully natural finish must wait for the DMA tail and must not
+            # count as an explicit stop.
+            expect("audio hello replays from the start", b"audio hello\n",
+                   [AUDIO_HELLO.format("0")], 0.06)
+            time.sleep(2.7)
+            finished = audio_status("hello finishes without a command", "idle")
+            check("natural finish waits for the queued tail",
+                  int(finished.group(14)), int(voice_stopped.group(14)) + 1)
+            check("natural finish is not counted as a stop",
+                  finished.group(15), voice_stopped.group(15))
+            check("audio errors stay at zero after the voice",
+                  (finished.group(16), finished.group(17)), ("0", "0"))
+            check("voice playback did not leak heap",
+                  int(eyes_status("heap after the voice").group(11)) > 50000,
+                  True)
 
         # --- experiment 002 regression ------------------------------------
         expect("red with LF", b"red\n", ["OK state=red pin=48"])

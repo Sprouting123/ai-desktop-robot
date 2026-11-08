@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 
+#include "audio_source.h"
+
 namespace audio {
 
 // MAX98357A first-test wiring and tone parameters. The amplifier has no
@@ -35,25 +37,24 @@ constexpr Config kDefaultConfig = {
     4,     // DMA buffers of kChunkFrames each
 };
 
-// One chunk is 15 ms at 16 kHz. The DMA queue holds four chunks, so a busy
-// loop can be late by roughly 45 ms without starving the stream.
-constexpr size_t kChunkFrames = 240;
-constexpr size_t kChannels = 2;
-
-// Owns the ESP-IDF I2S TX driver in Arduino-ESP32 2.0.17 (legacy driver API).
-// Playback is generated in small chunks from loop(); nothing here waits for
-// the DMA to drain or for a whole tone to finish.
+// Owns the ESP-IDF I2S TX driver in Arduino-ESP32 2.0.17 (legacy driver API)
+// and the I2S/DMA output layer. Playback content comes from a Source: the
+// built-in tone today, a flash PCM clip for `audio hello`, and eventually a
+// Wi-Fi/Opus decode source without changing this class's write path.
 class Engine {
  public:
-  explicit Engine(const Config& config = kDefaultConfig) : config_(config) {}
+  explicit Engine(const Config& config = kDefaultConfig);
   ~Engine() { end(); }
 
-  // Installs the driver and zeroes the DMA buffers. No tone is produced and
-  // the amplifier sees silence until an explicit beep().
+  // Installs the driver and zeroes the DMA buffers. No sound is produced and
+  // the amplifier sees silence until an explicit beep() or playClip().
   bool begin();
   // Starts (or restarts) one finite tone. Retries initialization once per call
   // so a transient failure at boot does not require a reset.
   bool beep();
+  // Starts (or restarts) a validated mono PCM clip. Returns false if the driver
+  // is unavailable or the clip metadata is invalid; nothing is played then.
+  bool playClip(const Clip& clip);
   // Stops immediately and clears the DMA buffers; safe in any state.
   void stop();
   void update();  // Non-blocking; call every loop().
@@ -63,6 +64,10 @@ class Engine {
   bool ready() const { return ready_; }
   bool playing() const { return playing_; }
   const char* state() const;
+  const char* sourceName() const;
+  const char* clipName() const;
+  uint32_t clipBytes() const;
+  uint32_t clipFrames() const;
   uint32_t plays() const { return plays_; }
   uint32_t errors() const { return errors_; }
   uint16_t toneHz() const { return config_.toneHz; }
@@ -72,19 +77,22 @@ class Engine {
  private:
   bool install();
   void uninstall();
-  void renderChunk();
-  void finishTone();
   void clearDma();
+  void startSource(Source* source);
+  void finishPlayback();
+  uint32_t drainMs() const;
 
   Config config_;
+  ToneSource tone_;
+  FlashClipSource clip_;
+  Source* active_ = nullptr;
   int16_t chunk_[kChunkFrames * kChannels] = {};
   size_t chunkBytes_ = 0;
   size_t chunkSent_ = 0;
-  uint32_t totalFrames_ = 0;
-  uint32_t framesRendered_ = 0;
-  float phase_ = 0.0f;
+  uint32_t drainStartMs_ = 0;
   bool ready_ = false;
   bool playing_ = false;
+  bool draining_ = false;
   uint32_t plays_ = 0;
   uint32_t stops_ = 0;
   uint32_t errors_ = 0;

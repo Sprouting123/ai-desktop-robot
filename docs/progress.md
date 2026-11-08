@@ -15,7 +15,8 @@
 - **实验 006 第二阶段：已验收。** 新增 `motion neutral|wiggle|together|alternate|stop|status` 非阻塞动作序列和 `mood happy|sad|angry|normal|status|stop` 表情联动；动作参数 75–105°，mood 80–100°、85–95°、82–98°，全部在 60–120° 限位内。新脚本 `scripts/test_serial_motion.py` 的 893 项检查通过（含第一阶段的独立停止回归），2 分钟连续运行 `failures=0`、无复位、堆稳定；GPIO48 已烧录实验 006-2 固件。2026-11-07 用户在外部 5V 上电条件下逐项确认四个动作、运动中 `motion stop`、四个 mood 及 `mood stop` 均正常；验收以用户观察为依据，未做定量测量，见[实验 006](experiments/006-dual-servo.md)。
 - **实验 007 已验收：** 纸板机械原型完成后，用户于 2026-11-08 报告安装的两只舵机与 OLED 情绪联动运行正常。证据为用户观察，没有归档照片、视频或测量数据；结构尺寸、电流、供电稳定性、实际角度、噪声与带载均未测量。见[实验 007](experiments/007-cardboard-prototype.md)。
 - **实验 008 已验收（2026-11-08 用户报告测试通过）：** 新增非阻塞 Wi-Fi STA、受限 HTTP API 与手机控制页。三环境构建通过；`scripts/test_serial_wifi.py` 在 Wi-Fi 凭据为空的固件上 910 项、临时不可达 SSID 固件上 903 项（HTTP 跳过）检查通过。2026-11-08 用户填入家庭 2.4GHz 凭据后，设备实测 `WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`，`GET /` 返回 200（8980 字节），`GET /api/status` 返回合法 JSON；完整回归（含 HTTP 401/403/405/413/429 限流、令牌不进响应、`wifi reconnect` 后 HTTP 恢复）**1038 项全部通过**。测试期间外部 5V 接通并由用户授权驱动舵机；2026-11-08 用户报告浏览器/手机页面与远程控制测试通过，记为已验收，证据为用户观察（未细分项目、未做定量测量）。见[实验 008](experiments/008-wifi-control.md)。
-- **实验 009 已验收（2026-11-08 用户确认首次发声）：** 新增独立 `src/audio_engine.h/.cpp`，用 ESP-IDF legacy I²S TX 驱动（GPIO7 BCLK / GPIO15 LRC / GPIO6 DIN）驱动 MAX98357A；16kHz、16bit、立体声同行样本、4×240 帧 DMA、880Hz/300ms、15% 幅度、5ms 淡入淡出；`i2s_write(...,0)` 非阻塞，`tx_desc_auto_clear` 与结束时 DMA 清零保证静音。新增 `audio beep|stop|status`，上电只初始化不发声。三环境构建通过（`rgb_gpio48` Flash 833789 字节、静态 RAM 51736 字节）；`--no-audio-sound` 回归 1050 项通过，首次发声后完整回归 **1075 项通过**（含播放、重启、停止状态机）。排查发现开发板 `5Vin` 是输入引脚、不能给功放供电（实测约 2V）；改由与舵机共用的外部 5V 给 VIN/SD 供电并共地后，用户发送 `audio beep` 确认听到提示音。音质、音量、发热与供电余量未测量。见[实验 009](experiments/009-audio-output.md)。
+- **实验 009 第一阶段已验收（2026-11-08 用户确认首次发声）：** 新增独立 `src/audio_engine.h/.cpp`，用 ESP-IDF legacy I²S TX 驱动（GPIO7 BCLK / GPIO15 LRC / GPIO6 DIN）驱动 MAX98357A；16kHz、16bit、立体声同行样本、4×240 帧 DMA、880Hz/300ms、15% 幅度、5ms 淡入淡出；`i2s_write(...,0)` 非阻塞，上电只初始化不发声。新增 `audio beep|stop|status`。排查发现开发板 `5Vin` 是输入引脚、不能给功放供电（实测约 2V）；改由与舵机共用的外部 5V 给 VIN/SD 供电并共地后，用户发送 `audio beep` 确认听到提示音。见[实验 009](experiments/009-audio-output.md)。
+- **实验 009 第二阶段：已验收（2026-11-08 用户试听成功）。** 用 Edge TTS（免费、非官方 Microsoft 接口）在本机生成“你好，我是你的 AI 桌宠！”，声音 `zh-CN-XiaoxiaoNeural`、语速 −5%，转成 16kHz/16bit/单声道裸 PCM（78,828 字节、2.463s），经 `board_build.embed_files` 只读链接进 flash；新增 `Source`/`ToneSource`/`FlashClipSource` 与 `audio hello`，每次只 `memcpy_P` 读取 240 帧，不整段复制到 RAM；修正 `i2s_write` 部分写入时按 `int16_t*` 偏移的字节指针错误，并新增自然结束 drain（约 80ms）避免尾音被 DMA 清零截断。三环境构建通过（Flash 914,909 字节、静态 RAM 52,328 字节），烧录校验通过，完整回归 **1103 项通过**（外部 5V 断开）。未产生付费 API 调用；上电不自动播放。2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功，记为已验收（证据为用户观察，未逐项说明句尾、爆音与音量，未做定量测量）。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
@@ -45,7 +46,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 006：动作序列与表情联动（第二阶段） | 已验收 | 三环境构建、GPIO48 烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；2026-11-07 用户确认 `motion neutral/wiggle/together/alternate`、运动中 `motion stop`、`mood happy/sad/angry/normal` 和 `mood stop` 均正常；未做定量测量，见[实验 006](experiments/006-dual-servo.md) |
 | 实验 007：纸板机械原型 | 已验收 | 2026-11-08 用户报告安装后的两只舵机与 OLED 情绪联动正常；证据为用户观察，未归档照片/视频，结构尺寸、电流、供电稳定性、实际角度未测量，见[实验 007](experiments/007-cardboard-prototype.md) |
 | 实验 008：Wi-Fi 与局域网控制 | 已验收 | 三环境构建通过；凭据为空 910 项、不可达 SSID 903 项通过；2026-11-08 真实联网成功（IP 192.168.31.17、RSSI -40）且含 HTTP 的完整回归 1038 项通过；用户报告浏览器/手机页面与远程控制测试通过，证据为用户观察，见[实验 008](experiments/008-wifi-control.md) |
-| 实验 009：MAX98357A I²S 音频 | 已验收 | 三环境构建通过；`--no-audio-sound` 回归 1050 项通过，首次发声后完整回归 1075 项通过；2026-11-08 用户确认外部 5V 供电下听到提示音；开发板 `5Vin` 为输入、不能给功放供电；音质与供电余量未测量，见[实验 009](experiments/009-audio-output.md) |
+| 实验 009：MAX98357A I²S 音频 | 已验收 | 第一阶段：2026-11-08 用户确认听到提示音，完整回归 1075 项通过。第二阶段：内嵌 Edge TTS 中文语音与 `audio hello`，三环境构建、烧录与 1103 项完整回归通过（外部 5V 断开），用户接通外部 5V 后报告试听成功；音质与供电余量未测量，见[实验 009](experiments/009-audio-output.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
 
@@ -69,7 +70,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 局域网控制 | HTTP 80 端口、明文，仅限可信家庭局域网；写操作需 `X-Auth-Token`；禁止公网端口映射或不受控 AP |
 | MAX98357A 功放（用户报告 + 2026-11-08 实测） | VIN、SD → 外部 5V 正极（与两只 SG90 共用，标称 5V 5A）；GND → 外部 5V 负极并与 ESP32 共地；DIN → GPIO6、BCLK → GPIO7、LRC → GPIO15；GAIN 悬空；扬声器只接 SPK+/SPK−，不得接 GND。开发板 `5Vin` 为输入、不能对外供电（实测约 2V）；带载能力与并发电流未测量；模块型号未鉴定 |
 
-用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；实验 009 已完成 MAX98357A 的接线、供电排查与首次发声验收；INMP441 等其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
+用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；实验 009 已完成 MAX98357A 的接线、供电排查、首次发声与内嵌中文语音试听验收；INMP441 等其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
 
 ## 实验 001 的验证摘要
 
@@ -186,6 +187,16 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - 改为外部 5V 供电（与两只 SG90 共用）：功放 VIN、SD 接外部 5V 正极，功放 GND 与 ESP32 GND 共地，扬声器仍只接 SPK+/SPK−。2026-11-08 用户发送 `audio beep`，确认听到一次短促提示音，实验 009 记为已验收。
 - 未测量项：音量、失真、爆音、功放发热、外部 5V 在功放与舵机同时工作时的电压跌落；播放中 `audio stop` 因提示音仅 300ms 未能人工复测，由回归覆盖。
 
+第二阶段（中文语音）补充：
+
+- TTS 选型：Edge TTS 7.3.1（免费、无账号密钥、非官方 Microsoft 接口）；未使用任何付费 API。对比 `zh-CN-XiaoxiaoNeural`、`zh-CN-XiaoyiNeural`、`zh-CN-YunxiNeural` 后选 Xiaoxiao（Warm）。
+- 资源：`assets/audio/hello_zh.raw`，16kHz/16bit/单声道裸 PCM，78,828 字节、39,414 帧、2.463s，峰值约 −3.5dBFS；用 ffmpeg 去首尾静音并加 10ms 淡入淡出，`ffprobe` 与逐样本统计确认是真实语音。来源、声音 ID 与许可说明见 `assets/audio/README.md`（文件不入库前需用户确认分发范围）。
+- 存储：`platformio.ini` 的 `board_build.embed_files` 把资源链接进 flash；`_binary_assets_audio_hello_zh_raw_start/_end` 之差即长度，链接核对为 0x133EC = 78,828 字节。`FlashClipSource` 每个块只拷贝 240 帧（480 字节），不整段进 RAM。
+- 输出层修正：`chunkSent_` 是字节数，原 `chunk_ + chunkSent_` 在部分写入时会按 2 倍偏移跳过样本，现改为 `reinterpret_cast<const uint8_t*>(chunk_) + chunkSent_`；自然结束改为等待 DMA 队列约 80ms 播完再回 `idle`，不再清零截尾，`audio stop` 仍立即清零。
+- 命令：新增 `audio hello`（播放中重启 `restarted=1`），`audio status` 增加 `source/clip/bytes/frames` 字段；`audio beep|stop` 含义不变。
+- 验证：三环境构建通过，`rgb_gpio48` Flash 914,909 字节（14.0%）、静态 RAM 52,328 字节（16.0%），烧录与哈希校验通过；启动新增 `AUDIO_CLIP name=hello_zh bytes=78828 frames=39414 sample_rate_hz=16000 volume_pct=60`；完整回归 **1103 项通过**（Wi-Fi 已连接含 HTTP，外部 5V 断开），覆盖 hello 启动/重启/停止/自然播完、播放期间 OLED 与动作响应、`errors=0` 与堆检查。回归不能证明可听声音。
+- 听音：2026-11-08 用户接通外部 5V（未同时驱动舵机）后发送 `audio hello`，报告**试听成功**，实验 009 第二阶段记为已验收（证据为用户观察）。句尾完整性、爆音与音量未逐项说明，声压、电流与供电余量未测量；`i2s_write` 部分写入路径未被脚本强制触发，属代码级修正。
+
 ## 未决事项与已解决问题
 
 | 事项 | 状态 / 影响 | 后续处理 |
@@ -215,15 +226,18 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 008 Git 同步 | 已完成 | 实现与验收提交 [922e24d](https://github.com/Sprouting123/ai-desktop-robot/commit/922e24dcb025e71fe85d0ef7f203deca4d9351ad) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地 commit 一致 |
 | 实验 009 首次发声 | 已验收（用户观察） | 2026-11-08 外部 5V 供电、SD 接高后，用户发送 `audio beep` 确认听到短促提示音；开发板 `5Vin` 是输入，不能给功放供电 |
 | 实验 009 音质与供电 | 未测量 | 音量、失真、爆音、功放发热、电压跌落均未测；功放与舵机共用外部 5V，同时负载未验证 |
-| 实验 009 播放中 `audio stop` | 软件已验证，未人工复测 | 提示音仅 300ms，人工输入来不及；完整回归覆盖状态机 |
+| 实验 009 播放中 `audio stop` | 第一阶段软件已验证，待长音频复测 | 提示音仅 300ms，人工输入来不及；2.463s 的 `audio hello` 可在听音时补做 |
 | 实验 009 非阻塞 | 软件已检查 | 分块状态机与 `i2s_write(...,0)`；回归中播放与动作/串口并行通过 |
-| 实验 009 Git 同步 | 已完成 | 实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
+| 实验 009 第一阶段 Git 同步 | 已完成 | 实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
+| 实验 009 第二阶段听音 | 已验收（用户观察） | 2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功；未逐项说明句尾完整性、爆音与音量，未做定量测量 |
+| 实验 009 第二阶段音频资源 | 已生成，未提交 | `assets/audio/hello_zh.raw` 由 Edge TTS 生成；Edge TTS 为非官方接口，资源仅用于本项目实验，公开分发前需用户确认或改用许可明确的 TTS |
+| 实验 009 第二阶段 Git 同步 | 未完成 | 等待用户明确授权后提交与推送；不得提交凭据或 `work/` 下的临时文件 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：实验 009 已完成首次发声验收，等待 Git 提交与推送授权。** 固件、三环境构建、1050 项（`--no-audio-sound`）与 1075 项完整回归均通过，2026-11-08 用户确认外部 5V 供电下听到提示音。后续可选：在安静环境评估音量与音质、测量功放与舵机同时工作时的外部 5V 电压、用更长的测试音补测播放中 `audio stop`。烧录和自动测试期间外部 5V 仍需断开；出现爆音、异常发热或电压下跌立即断开外部 5V。
+**当前下一步：等待 Git 提交与推送授权。** 实验 009 第二阶段已完成构建、烧录、1103 项回归与用户听音验收；提交内容需经用户确认，包括是否把生成的 `assets/audio/hello_zh.raw` 一并入库。后续可选：在安静环境评估音量与音质、测量功放与舵机同时工作时的外部 5V 电压、用 2.46 s 的 `audio hello` 补做播放中 `audio stop` 的实物观察。烧录和自动测试期间外部 5V 仍需断开；出现爆音、异常发热或电压下跌立即断开外部 5V。
 
 实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
@@ -259,6 +273,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 008 真实联网：用户填入 2.4GHz 凭据后烧录，`WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`；含 HTTP 的完整回归 1038 项通过；外部 5V 接通（用户授权）下自动测试驱动过舵机；用户随后报告浏览器/手机页面与远程控制测试通过，实验 008 记为已验收 | [实验 008](experiments/008-wifi-control.md)；IP 由 DHCP 分配；验收证据为用户观察 |
 | 2026-11-08 | 实验 009 第一阶段：新增 `AudioEngine` 与 `audio beep|stop|status`，ESP-IDF legacy I²S TX、16kHz/16bit/立体声、非阻塞分块播放、低幅度 880Hz/300ms 提示音；三环境构建通过，烧录后 `--no-audio-sound` 完整回归 1050 项通过；首次实际发声待用户观察 | [实验 009](experiments/009-audio-output.md)；首次提示音保留给用户 |
 | 2026-11-08 | 实验 009 首次发声验收：排查确认开发板 `5Vin` 为输入、不能给功放供电；改用与舵机共用的外部 5V 并共地后，用户确认听到提示音；完整回归 1075 项通过 | [实验 009](experiments/009-audio-output.md)；实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送；证据为用户观察 |
+| 2026-11-08 | 实验 009 第二阶段软件完成：Edge TTS 生成中文语音，内嵌 flash 播放，新增 `audio hello` 与 `Source` 抽象；修正字节指针偏移、加入自然结束 drain；三环境构建、烧录与 1103 项回归通过（外部 5V 断开） | [实验 009](experiments/009-audio-output.md)；音频资源与转换说明见 `assets/audio/README.md` |
+| 2026-11-08 | 实验 009 第二阶段听音验收：用户接通外部 5V、未同时驱动舵机，发送 `audio hello` 报告试听成功；第二阶段记为已验收（证据为用户观察） | [实验 009](experiments/009-audio-output.md)；尚未提交，等待 Git 授权 |
 
 ## 维护方法
 

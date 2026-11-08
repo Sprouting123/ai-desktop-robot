@@ -1,16 +1,13 @@
 #include "audio_engine.h"
 
-#include <cmath>
 #include <cstring>
 
 namespace audio {
-namespace {
 
-constexpr float kTwoPi = 6.28318530718f;
-// 5 ms linear ramps remove the click that a hard start/stop would produce.
-constexpr uint32_t kFadeMs = 5;
-
-}  // namespace
+Engine::Engine(const Config& config)
+    : config_(config),
+      tone_(config.sampleRate, config.toneHz, config.durationMs,
+            config.amplitudePercent) {}
 
 bool Engine::begin() {
   if (ready_) return true;
@@ -44,7 +41,7 @@ bool Engine::install() {
   config.dma_buf_len = kChunkFrames;
   config.use_apll = false;
   // Underrun outputs zeros instead of repeating the last buffer, so a finished
-  // tone cannot loop as a buzz if loop() is briefly late.
+  // clip cannot loop as a buzz if loop() is briefly late.
   config.tx_desc_auto_clear = true;
   config.fixed_mclk = 0;
   config.mclk_multiple = I2S_MCLK_MULTIPLE_256;
@@ -83,6 +80,8 @@ void Engine::uninstall() {
   i2s_driver_uninstall(config_.port);
   ready_ = false;
   playing_ = false;
+  draining_ = false;
+  active_ = nullptr;
   chunkBytes_ = 0;
   chunkSent_ = 0;
 }
@@ -93,25 +92,41 @@ void Engine::end() {
 
 bool Engine::beep() {
   if (!ready_ && !begin()) return false;
-  // Restarting an active tone is allowed: forget the old chunk and phase.
+  startSource(&tone_);
+  return true;
+}
+
+bool Engine::playClip(const Clip& clip) {
+  if (!ready_ && !begin()) return false;
+  if (!clip_.setClip(clip, config_.sampleRate)) {
+    // Invalid metadata (null pointer, odd byte count, wrong rate, bad volume)
+    // is rejected before any read, so it can never index past the asset.
+    ++errors_;
+    return false;
+  }
+  startSource(&clip_);
+  return true;
+}
+
+void Engine::startSource(Source* source) {
+  // A new trigger owns the output immediately: forget any partially written
+  // chunk, flush stale DMA data and start the source from its first frame.
   playing_ = false;
+  draining_ = false;
+  active_ = source;
+  source->restart();
   chunkBytes_ = 0;
   chunkSent_ = 0;
-  framesRendered_ = 0;
-  phase_ = 0.0f;
-  totalFrames_ = static_cast<uint32_t>(
-      static_cast<uint64_t>(config_.sampleRate) * config_.durationMs / 1000);
-  if (totalFrames_ == 0) return false;
   clearDma();
-  renderChunk();
   playing_ = true;
   ++plays_;
-  return true;
 }
 
 void Engine::stop() {
   if (!playing_ && !ready_) return;
   playing_ = false;
+  draining_ = false;
+  active_ = nullptr;
   chunkBytes_ = 0;
   chunkSent_ = 0;
   if (ready_) clearDma();
@@ -122,71 +137,73 @@ void Engine::clearDma() {
   if (ready_) i2s_zero_dma_buffer(config_.port);
 }
 
-void Engine::renderChunk() {
-  const uint32_t remaining = totalFrames_ - framesRendered_;
-  const size_t frames = remaining < kChunkFrames ? remaining : kChunkFrames;
-  const float step = kTwoPi * config_.toneHz / config_.sampleRate;
-  const int32_t amplitude = 32767L * config_.amplitudePercent / 100;
-  const uint32_t fadeFrames = config_.sampleRate * kFadeMs / 1000 > 0
-                                  ? config_.sampleRate * kFadeMs / 1000
-                                  : 1;
-
-  for (size_t i = 0; i < frames; ++i) {
-    const uint32_t index = framesRendered_ + static_cast<uint32_t>(i);
-    float envelope = 1.0f;
-    if (index < fadeFrames) {
-      envelope = static_cast<float>(index) / static_cast<float>(fadeFrames);
-    }
-    const uint32_t tail = totalFrames_ - 1 - index;
-    if (tail < fadeFrames) {
-      const float fadeOut = static_cast<float>(tail) / static_cast<float>(fadeFrames);
-      if (fadeOut < envelope) envelope = fadeOut;
-    }
-    const int16_t sample =
-        static_cast<int16_t>(sinf(phase_) * static_cast<float>(amplitude) * envelope);
-    chunk_[i * 2] = sample;
-    chunk_[i * 2 + 1] = sample;
-    phase_ += step;
-    if (phase_ >= kTwoPi) phase_ -= kTwoPi;
-  }
-
-  framesRendered_ += static_cast<uint32_t>(frames);
-  chunkBytes_ = frames * kChannels * sizeof(int16_t);
-  chunkSent_ = 0;
+uint32_t Engine::drainMs() const {
+  if (config_.sampleRate == 0) return 100;
+  // After the final write the DMA queue can still hold up to dmaBufferCount
+  // chunks. Wait out that bounded tail instead of zeroing the DMA, which would
+  // cut the last syllable. tx_desc_auto_clear outputs silence afterwards.
+  return static_cast<uint32_t>(
+             (1000ULL * config_.dmaBufferCount * kChunkFrames) /
+             config_.sampleRate) +
+         20;
 }
 
 void Engine::update() {
   if (!ready_ || !playing_) return;
+
+  if (draining_) {
+    // The source is exhausted and every byte is queued. Keep reporting
+    // "playing" until the worst-case queue tail has reached the amplifier.
+    if (static_cast<uint32_t>(millis() - drainStartMs_) >= drainMs()) {
+      finishPlayback();
+    }
+    return;
+  }
+
   if (chunkSent_ >= chunkBytes_) {
-    if (framesRendered_ >= totalFrames_) {
-      finishTone();
+    if (active_ == nullptr) {
+      finishPlayback();
       return;
     }
-    renderChunk();
+    const size_t frames = active_->fill(chunk_, kChunkFrames);
+    if (frames == 0) {
+      draining_ = true;
+      drainStartMs_ = millis();
+      return;
+    }
+    chunkBytes_ = frames * kChannels * sizeof(int16_t);
+    chunkSent_ = 0;
   }
 
   size_t written = 0;
+  // chunkSent_ is a byte count, so the pointer must advance in bytes. Using
+  // chunk_ + chunkSent_ would advance int16_t elements (twice the intended
+  // offset) after a partial write.
+  const uint8_t* cursor = reinterpret_cast<const uint8_t*>(chunk_) + chunkSent_;
   // Zero ticks: if the DMA queue is full this returns immediately and the
   // remainder is retried next loop. It never waits for the amplifier.
-  const esp_err_t err = i2s_write(config_.port, chunk_ + chunkSent_,
+  const esp_err_t err = i2s_write(config_.port, cursor,
                                   chunkBytes_ - chunkSent_, &written, 0);
   if (written > 0) chunkSent_ += written;
   if (err == ESP_OK || err == ESP_ERR_TIMEOUT) return;  // Timeout = queue full.
   lastErrorCode_ = err;
   ++errors_;
   playing_ = false;
+  draining_ = false;
+  active_ = nullptr;
   chunkBytes_ = 0;
   chunkSent_ = 0;
   clearDma();
 }
 
-void Engine::finishTone() {
+void Engine::finishPlayback() {
   playing_ = false;
+  draining_ = false;
+  active_ = nullptr;
   chunkBytes_ = 0;
   chunkSent_ = 0;
-  // The tone already ends in a fade-out, but clearing the DMA guarantees that
-  // the idle state is true silence.
-  clearDma();
+  // Deliberately no i2s_zero_dma_buffer(): the queued tail has been given its
+  // full drain time, and tx_desc_auto_clear keeps the idle stream silent.
 }
 
 const char* Engine::state() const {
@@ -194,14 +211,40 @@ const char* Engine::state() const {
   return ready_ ? "idle" : "unavailable";
 }
 
+const char* Engine::sourceName() const {
+  if (active_ == &tone_) return "tone";
+  if (active_ == &clip_) return "clip";
+  return "none";
+}
+
+const char* Engine::clipName() const {
+  if (active_ == &clip_ && clip_.valid()) return clip_.clip().name;
+  return "-";
+}
+
+uint32_t Engine::clipBytes() const {
+  if (active_ == &clip_ && clip_.valid()) return clip_.clip().bytes;
+  return 0;
+}
+
+uint32_t Engine::clipFrames() const {
+  if (active_ == &tone_) return tone_.totalFrames();
+  if (active_ == &clip_) return clip_.totalFrames();
+  return 0;
+}
+
 void Engine::printStatus() const {
   Serial.printf(
-      "AUDIO state=%s ready=%u driver=i2s_std bclk=%u lrck=%u din=%u "
-      "rate_hz=%lu bits=16 channels=2 tone_hz=%u duration_ms=%u "
-      "amplitude_pct=%u plays=%lu stops=%lu errors=%lu last_error=%ld\n",
-      state(), ready_ ? 1U : 0U, config_.bclkPin, config_.lrckPin,
-      config_.dataPin, static_cast<unsigned long>(config_.sampleRate),
-      config_.toneHz, config_.durationMs, config_.amplitudePercent,
+      "AUDIO state=%s ready=%u source=%s clip=%s bytes=%lu frames=%lu "
+      "driver=i2s_std bclk=%u lrck=%u din=%u rate_hz=%lu bits=16 channels=2 "
+      "tone_hz=%u duration_ms=%u amplitude_pct=%u plays=%lu stops=%lu "
+      "errors=%lu last_error=%ld\n",
+      state(), ready_ ? 1U : 0U, sourceName(), clipName(),
+      static_cast<unsigned long>(clipBytes()),
+      static_cast<unsigned long>(clipFrames()), config_.bclkPin,
+      config_.lrckPin, config_.dataPin,
+      static_cast<unsigned long>(config_.sampleRate), config_.toneHz,
+      config_.durationMs, config_.amplitudePercent,
       static_cast<unsigned long>(plays_), static_cast<unsigned long>(stops_),
       static_cast<unsigned long>(errors_), static_cast<long>(lastErrorCode_));
 }

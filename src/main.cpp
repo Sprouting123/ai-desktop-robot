@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "audio_engine.h"
+#include "voice_clips.h"
 #include "eyes_engine.h"
 #include "mood_controller.h"
 #include "motion_engine.h"
@@ -106,7 +107,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio stop | audio status; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -463,8 +464,9 @@ void executeWeb(char* args) {
   Serial.println("ERR web_usage; use help");
 }
 
-// Audio commands only control the local tone generator. They never trigger a
-// motion, expression or network action, and playback is never started at boot.
+// Audio commands only control local playback (the test tone or the embedded
+// voice clip). They never trigger a motion, expression or network action, and
+// playback is never started at boot.
 void executeAudio(char* args) {
   if (*args == '\0') {
     Serial.println("ERR audio_usage; use help");
@@ -490,6 +492,32 @@ void executeAudio(char* args) {
     Serial.printf("OK audio=beep tone_hz=%u duration_ms=%u amplitude_pct=%u restarted=%u\n",
                   audioEngine.toneHz(), audioEngine.durationMs(),
                   audioEngine.amplitudePercent(), wasPlaying ? 1U : 0U);
+    return;
+  }
+  if (std::strcmp(args, "hello") == 0) {
+    const audio::Clip& clip = voice::helloClip();
+    const bool wasPlaying = audioEngine.playing();
+    if (!audioEngine.playClip(clip)) {
+      // ready() is only true after a successful install, so a failure there
+      // means the driver is unavailable; otherwise the asset metadata was
+      // rejected before any flash read.
+      Serial.println(audioEngine.ready() ? "ERR audio_clip_invalid"
+                                         : "ERR audio_not_ready");
+      return;
+    }
+    const uint32_t frames = audioEngine.clipFrames();
+    const uint32_t durationMs =
+        voice::kSampleRate == 0
+            ? 0
+            : static_cast<uint32_t>(
+                  (static_cast<uint64_t>(frames) * 1000) / voice::kSampleRate);
+    Serial.printf(
+        "OK audio=hello clip=%s bytes=%lu frames=%lu duration_ms=%lu "
+        "volume_pct=%u sample_rate_hz=%lu restarted=%u\n",
+        clip.name, static_cast<unsigned long>(audioEngine.clipBytes()),
+        static_cast<unsigned long>(frames),
+        static_cast<unsigned long>(durationMs), clip.volumePercent,
+        static_cast<unsigned long>(voice::kSampleRate), wasPlaying ? 1U : 0U);
     return;
   }
   Serial.println("ERR audio_usage; use help");
@@ -643,8 +671,16 @@ void setup() {
   servo1Controller.begin("SERVO1");
   servo2Controller.begin("SERVO2");
   // Installing I2S only drives clocks with zeroed DMA data. No tone is played
-  // at boot; the first sound requires an explicit `audio beep`.
+  // at boot; the first sound requires an explicit `audio beep` or `audio hello`.
   audioEngine.begin();
+  // Report the linked asset's real length, which comes from the linker symbols
+  // rather than a hand-maintained constant.
+  const audio::Clip& hello = voice::helloClip();
+  Serial.printf(
+      "AUDIO_CLIP name=%s bytes=%lu frames=%lu sample_rate_hz=%lu volume_pct=%u\n",
+      hello.name, static_cast<unsigned long>(hello.bytes),
+      static_cast<unsigned long>(hello.bytes / sizeof(int16_t)),
+      static_cast<unsigned long>(hello.sampleRate), hello.volumePercent);
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
