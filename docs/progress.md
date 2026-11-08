@@ -217,7 +217,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 009 音质与供电 | 未测量 | 音量、失真、爆音、功放发热、电压跌落均未测；功放与舵机共用外部 5V，同时负载未验证 |
 | 实验 009 播放中 `audio stop` | 软件已验证，未人工复测 | 提示音仅 300ms，人工输入来不及；完整回归覆盖状态机 |
 | 实验 009 非阻塞 | 软件已检查 | 分块状态机与 `i2s_write(...,0)`；回归中播放与动作/串口并行通过 |
-| 实验 009 Git 同步 | 待授权 | 本轮改动尚未提交或推送；需用户确认后再执行 |
+| 实验 009 Git 同步 | 已完成 | 实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
@@ -258,7 +258,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 008：非阻塞 Wi-Fi STA、受限 HTTP API、`X-Auth-Token` 写保护、手机控制页、本地凭据模板与忽略规则；三环境构建通过，Wi-Fi 凭据为空的固件 910 项、不可达 SSID 固件 903 项检查通过 | [实验 008](experiments/008-wifi-control.md)；本机捕获与备份在 `work/`，被 Git 忽略 |
 | 2026-11-08 | 实验 008 真实联网：用户填入 2.4GHz 凭据后烧录，`WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`；含 HTTP 的完整回归 1038 项通过；外部 5V 接通（用户授权）下自动测试驱动过舵机；用户随后报告浏览器/手机页面与远程控制测试通过，实验 008 记为已验收 | [实验 008](experiments/008-wifi-control.md)；IP 由 DHCP 分配；验收证据为用户观察 |
 | 2026-11-08 | 实验 009 第一阶段：新增 `AudioEngine` 与 `audio beep|stop|status`，ESP-IDF legacy I²S TX、16kHz/16bit/立体声、非阻塞分块播放、低幅度 880Hz/300ms 提示音；三环境构建通过，烧录后 `--no-audio-sound` 完整回归 1050 项通过；首次实际发声待用户观察 | [实验 009](experiments/009-audio-output.md)；首次提示音保留给用户 |
-| 2026-11-08 | 实验 009 首次发声验收：排查确认开发板 `5Vin` 为输入、不能给功放供电；改用与舵机共用的外部 5V 并共地后，用户确认听到提示音；完整回归 1075 项通过 | [实验 009](experiments/009-audio-output.md)；证据为用户观察 |
+| 2026-11-08 | 实验 009 首次发声验收：排查确认开发板 `5Vin` 为输入、不能给功放供电；改用与舵机共用的外部 5V 并共地后，用户确认听到提示音；完整回归 1075 项通过 | [实验 009](experiments/009-audio-output.md)；实现与验收提交 [76914ed](https://github.com/Sprouting123/ai-desktop-robot/commit/76914ed4a6e14d098b4fe3550293fdf81efbfeed) 已推送；证据为用户观察 |
 
 ## 维护方法
 
