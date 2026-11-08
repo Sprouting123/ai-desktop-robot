@@ -7,7 +7,7 @@
 - **实验 001 已验收：** GPIO48 板载 RGB LED 红 → 绿 → 蓝循环，每色约 1 秒；构建、烧录校验、串口和用户实物观察均有记录。
 - **管理机制已建立：** 规则、进度和交接入口已提交为 `93c9ce6`；继续随项目状态维护。
 - **实验 002 已验收：** 六个串口命令已实现、构建与烧录通过、38 项实机串口检查通过；用户在 VS Code Monitor 中确认红绿蓝保持且 off 熄灯。实验 002 验收时设备启动为 off，不再自动循环。
-- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 008。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
+- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 009。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
 - **实验 003 第二阶段：已验收（SH1106 首次显示）。** U8g2 2.36.17 已加入；默认 SH1106，支持串口切换 SSD1306。最终三环境构建和 GPIO48 烧录校验通过，65 项实机串口检查全部通过；用户已确认 SH1106 画面完整、没有问题；SSD1306 对比画面由用户反馈异常，显示未通过；保留 SH1106 为默认方案。
 - **实验 004 已验收：** 十种持续表情、一次性眨眼、状态查询与 ASCII 帧缓冲调试已实现；默认开机进入 normal 眼睛画面。三环境构建通过，GPIO48 烧录及区域 hash 校验通过；`scripts/test_serial_eyes.py` 的 244 项串口/软件检查全部通过，十种表情帧缓冲哈希互不相同，自动眨眼在命令服务期间正常发生，内部堆与最大区域传输时间稳定。用户于 2026-11-07 按实验 004 第 9 节逐项观察，确认十种表情、手动/自动眨眼与显示均正常，见[实验 004](experiments/004-oled-eyes.md)。
 - **实验 005 已验收：** SG90 单舵机控制已实现：GPIO4、50Hz LEDC、14 位分辨率、软件限位 60–120°、默认输出关闭、非阻塞渐进运动和 `servo stop` 放松策略。三环境构建、GPIO48 烧录校验和 `scripts/test_serial_servo.py` 的 348 项串口/软件检查通过，2 分钟连续运行无失败、无复位、堆稳定。2026-11-07 用户上电完成第 8 节观察，反馈 `servo center`/`75`/`105`/`120`/`60`、运动中 `servo stop` 与恢复、OLED 并行运行全部正常，见[实验 005](experiments/005-servo.md)。
@@ -15,10 +15,11 @@
 - **实验 006 第二阶段：已验收。** 新增 `motion neutral|wiggle|together|alternate|stop|status` 非阻塞动作序列和 `mood happy|sad|angry|normal|status|stop` 表情联动；动作参数 75–105°，mood 80–100°、85–95°、82–98°，全部在 60–120° 限位内。新脚本 `scripts/test_serial_motion.py` 的 893 项检查通过（含第一阶段的独立停止回归），2 分钟连续运行 `failures=0`、无复位、堆稳定；GPIO48 已烧录实验 006-2 固件。2026-11-07 用户在外部 5V 上电条件下逐项确认四个动作、运动中 `motion stop`、四个 mood 及 `mood stop` 均正常；验收以用户观察为依据，未做定量测量，见[实验 006](experiments/006-dual-servo.md)。
 - **实验 007 已验收：** 纸板机械原型完成后，用户于 2026-11-08 报告安装的两只舵机与 OLED 情绪联动运行正常。证据为用户观察，没有归档照片、视频或测量数据；结构尺寸、电流、供电稳定性、实际角度、噪声与带载均未测量。见[实验 007](experiments/007-cardboard-prototype.md)。
 - **实验 008 已验收（2026-11-08 用户报告测试通过）：** 新增非阻塞 Wi-Fi STA、受限 HTTP API 与手机控制页。三环境构建通过；`scripts/test_serial_wifi.py` 在 Wi-Fi 凭据为空的固件上 910 项、临时不可达 SSID 固件上 903 项（HTTP 跳过）检查通过。2026-11-08 用户填入家庭 2.4GHz 凭据后，设备实测 `WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`，`GET /` 返回 200（8980 字节），`GET /api/status` 返回合法 JSON；完整回归（含 HTTP 401/403/405/413/429 限流、令牌不进响应、`wifi reconnect` 后 HTTP 恢复）**1038 项全部通过**。测试期间外部 5V 接通并由用户授权驱动舵机；2026-11-08 用户报告浏览器/手机页面与远程控制测试通过，记为已验收，证据为用户观察（未细分项目、未做定量测量）。见[实验 008](experiments/008-wifi-control.md)。
+- **实验 009 已验收（2026-11-08 用户确认首次发声）：** 新增独立 `src/audio_engine.h/.cpp`，用 ESP-IDF legacy I²S TX 驱动（GPIO7 BCLK / GPIO15 LRC / GPIO6 DIN）驱动 MAX98357A；16kHz、16bit、立体声同行样本、4×240 帧 DMA、880Hz/300ms、15% 幅度、5ms 淡入淡出；`i2s_write(...,0)` 非阻塞，`tx_desc_auto_clear` 与结束时 DMA 清零保证静音。新增 `audio beep|stop|status`，上电只初始化不发声。三环境构建通过（`rgb_gpio48` Flash 833789 字节、静态 RAM 51736 字节）；`--no-audio-sound` 回归 1050 项通过，首次发声后完整回归 **1075 项通过**（含播放、重启、停止状态机）。排查发现开发板 `5Vin` 是输入引脚、不能给功放供电（实测约 2V）；改由与舵机共用的外部 5V 给 VIN/SD 供电并共地后，用户发送 `audio beep` 确认听到提示音。音质、音量、发热与供电余量未测量。见[实验 009](experiments/009-audio-output.md)。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
-- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[008-wifi-control.md](experiments/008-wifi-control.md)；前置实验：[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
+- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[009-audio-output.md](experiments/009-audio-output.md)；前置实验：[008-wifi-control.md](experiments/008-wifi-control.md)、[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
 
 ## 长期目标与协作方式
 
@@ -44,6 +45,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 006：动作序列与表情联动（第二阶段） | 已验收 | 三环境构建、GPIO48 烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；2026-11-07 用户确认 `motion neutral/wiggle/together/alternate`、运动中 `motion stop`、`mood happy/sad/angry/normal` 和 `mood stop` 均正常；未做定量测量，见[实验 006](experiments/006-dual-servo.md) |
 | 实验 007：纸板机械原型 | 已验收 | 2026-11-08 用户报告安装后的两只舵机与 OLED 情绪联动正常；证据为用户观察，未归档照片/视频，结构尺寸、电流、供电稳定性、实际角度未测量，见[实验 007](experiments/007-cardboard-prototype.md) |
 | 实验 008：Wi-Fi 与局域网控制 | 已验收 | 三环境构建通过；凭据为空 910 项、不可达 SSID 903 项通过；2026-11-08 真实联网成功（IP 192.168.31.17、RSSI -40）且含 HTTP 的完整回归 1038 项通过；用户报告浏览器/手机页面与远程控制测试通过，证据为用户观察，见[实验 008](experiments/008-wifi-control.md) |
+| 实验 009：MAX98357A I²S 音频 | 已验收 | 三环境构建通过；`--no-audio-sound` 回归 1050 项通过，首次发声后完整回归 1075 项通过；2026-11-08 用户确认外部 5V 供电下听到提示音；开发板 `5Vin` 为输入、不能给功放供电；音质与供电余量未测量，见[实验 009](experiments/009-audio-output.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
 
@@ -65,8 +67,9 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | SG90 舵机 2（用户报告） | 暂定 180° SG90；信号 → GPIO5；与舵机 1 共用外部 5V 并共地。2026-11-07 用户确认单独测试与双舵机同时运动正常；实际角度、电流未测量 |
 | Wi-Fi | STA、家庭 2.4GHz；SSID/密码/令牌位于本机 `src/secrets.h`（被 Git 忽略）；2026-11-08 实测连接成功：`ip=192.168.31.17 rssi=-40 channel=3`，电脑同网段（192.168.31.29）可 ping 通；IP 由 DHCP 分配，重启后可能变化 |
 | 局域网控制 | HTTP 80 端口、明文，仅限可信家庭局域网；写操作需 `X-Auth-Token`；禁止公网端口映射或不受控 AP |
+| MAX98357A 功放（用户报告 + 2026-11-08 实测） | VIN、SD → 外部 5V 正极（与两只 SG90 共用，标称 5V 5A）；GND → 外部 5V 负极并与 ESP32 共地；DIN → GPIO6、BCLK → GPIO7、LRC → GPIO15；GAIN 悬空；扬声器只接 SPK+/SPK−，不得接 GND。开发板 `5Vin` 为输入、不能对外供电（实测约 2V）；带载能力与并发电流未测量；模块型号未鉴定 |
 
-用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
+用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；实验 009 已完成 MAX98357A 的接线、供电排查与首次发声验收；INMP441 等其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
 
 ## 实验 001 的验证摘要
 
@@ -171,6 +174,18 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - Ubuntu 浏览器与手机的实际页面操作、远程情绪/动作实物效果仍需用户观察确认；断路由器后的自动重连、长时间联网稳定性未验证。
 - 原始捕获与备份在 `work/`（`008-wifi-fail-capture.py`、`secrets.h.backup-008`），被 Git 忽略，未归档入库。
 
+## 实验 009 的验证摘要
+
+- 新增 `src/audio_engine.h/.cpp`：ESP-IDF legacy I²S TX 驱动，端口 0、主模式、BCLK GPIO7 / LRC GPIO15 / DIN GPIO6、无 MCLK；16kHz、16bit、双声道同一样本；4×240 帧 DMA（约 60ms）；`tx_desc_auto_clear`；不启用 APLL。
+- 提示音：880Hz、300ms、满量程 15%（约 −16.5dBFS）、首尾 5ms 线性淡入淡出；`beep()` 可播放中重启，`stop()` 立即清零 DMA，`update()` 每轮最多写一块且 `i2s_write` 超时为 0。
+- 命令：`audio beep|stop|status`；上电只安装驱动、`AUDIO_INIT ready=1`、`state=idle plays=0`，不发声；非法参数 `ERR audio_usage; use help`；初始化失败重试一次后返回 `ERR audio_not_ready`。
+- 三环境构建：`diagnostics`、`rgb_gpio48`、`rgb_gpio38` 全部 SUCCESS；`rgb_gpio48` Flash 833789 字节（12.7%）、静态 RAM 51736 字节（15.8%）。
+- 烧录后 `scripts/test_serial_wifi.py --no-audio-sound`：**1050 项检查全部通过**（约 3 分钟），原有 1038 项 Wi-Fi/HTTP/OLED/双舵机/动作/情绪回归继续通过，新增音频初始化、命令解析、空闲停止与“拒绝命令不启动播放”检查；结束状态为音频静音、两路脉宽 0、RGB 熄灭、眼睛画面。
+- 首次发声后再次运行完整回归（不加 `--no-audio-sound`，外部 5V 按规则断开、功放未供电）：**1075 项检查全部通过**，新增播放状态机检查——`state=playing`、播放中重复触发 `restarted=1`、播放中 `audio stop`、播放期间动作与串口不被阻塞、播放结束回到 `idle`、上电不自动发声。
+- 首次发声排查：功放 VIN 原接开发板 `5Vin`，`audio beep` 返回成功且 `plays` 增加、`errors=0`，但完全无声；万用表测得 `5Vin` 对 GND 约 2V，确认 `5Vin` 是供电输入、不能对外供电。扬声器用 1.5V 电池瞬碰可听到“咔”声，排除扬声器故障。
+- 改为外部 5V 供电（与两只 SG90 共用）：功放 VIN、SD 接外部 5V 正极，功放 GND 与 ESP32 GND 共地，扬声器仍只接 SPK+/SPK−。2026-11-08 用户发送 `audio beep`，确认听到一次短促提示音，实验 009 记为已验收。
+- 未测量项：音量、失真、爆音、功放发热、外部 5V 在功放与舵机同时工作时的电压跌落；播放中 `audio stop` 因提示音仅 300ms 未能人工复测，由回归覆盖。
+
 ## 未决事项与已解决问题
 
 | 事项 | 状态 / 影响 | 后续处理 |
@@ -198,12 +213,17 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 008 远程舵机实物效果 | 已验收（用户观察） | 自动测试在用户授权、外部 5V 接通时驱动过舵机；用户报告网页控制测试通过，未做定量测量 |
 | 实验 008 安全边界 | 已知限制 | 明文 HTTP、令牌保护写操作、仅供可信局域网；禁止公网映射或不受控 AP；未做渗透测试 |
 | 实验 008 Git 同步 | 已完成 | 实现与验收提交 [922e24d](https://github.com/Sprouting123/ai-desktop-robot/commit/922e24dcb025e71fe85d0ef7f203deca4d9351ad) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地 commit 一致 |
+| 实验 009 首次发声 | 已验收（用户观察） | 2026-11-08 外部 5V 供电、SD 接高后，用户发送 `audio beep` 确认听到短促提示音；开发板 `5Vin` 是输入，不能给功放供电 |
+| 实验 009 音质与供电 | 未测量 | 音量、失真、爆音、功放发热、电压跌落均未测；功放与舵机共用外部 5V，同时负载未验证 |
+| 实验 009 播放中 `audio stop` | 软件已验证，未人工复测 | 提示音仅 300ms，人工输入来不及；完整回归覆盖状态机 |
+| 实验 009 非阻塞 | 软件已检查 | 分块状态机与 `i2s_write(...,0)`；回归中播放与动作/串口并行通过 |
+| 实验 009 Git 同步 | 待授权 | 本轮改动尚未提交或推送；需用户确认后再执行 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：规划实验 009。** 实验 008 已由用户报告验收通过（联网、HTTP API、页面与远程控制），固件与文档准备提交。下一步需用户决定方向：继续补齐实验 008 的稳健性（断路由器自动重连、长时间联网稳定性），还是进入长期目标中的云端 AI 对话（需要先定服务、凭据保存方式和最小交互行为）。无论哪条，都先写实验 009 的目标、硬件/接线和验收标准再动手。设备当前 IP 为 `192.168.31.17`，由 DHCP 分配，重启后可能变化，用 `wifi status` 查询。完整步骤与安全提醒见[实验 008 第 7 节](experiments/008-wifi-control.md)。
+**当前下一步：实验 009 已完成首次发声验收，等待 Git 提交与推送授权。** 固件、三环境构建、1050 项（`--no-audio-sound`）与 1075 项完整回归均通过，2026-11-08 用户确认外部 5V 供电下听到提示音。后续可选：在安静环境评估音量与音质、测量功放与舵机同时工作时的外部 5V 电压、用更长的测试音补测播放中 `audio stop`。烧录和自动测试期间外部 5V 仍需断开；出现爆音、异常发热或电压下跌立即断开外部 5V。
 
 实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
@@ -237,6 +257,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 007：纸板机械原型完成，用户确认安装后的两只舵机与 OLED 情绪联动正常，记为已验收；结构尺寸、电流、供电稳定性、实际角度未测量 | [实验 007](experiments/007-cardboard-prototype.md)；证据为用户观察，无归档照片/视频 |
 | 2026-11-08 | 实验 008：非阻塞 Wi-Fi STA、受限 HTTP API、`X-Auth-Token` 写保护、手机控制页、本地凭据模板与忽略规则；三环境构建通过，Wi-Fi 凭据为空的固件 910 项、不可达 SSID 固件 903 项检查通过 | [实验 008](experiments/008-wifi-control.md)；本机捕获与备份在 `work/`，被 Git 忽略 |
 | 2026-11-08 | 实验 008 真实联网：用户填入 2.4GHz 凭据后烧录，`WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`；含 HTTP 的完整回归 1038 项通过；外部 5V 接通（用户授权）下自动测试驱动过舵机；用户随后报告浏览器/手机页面与远程控制测试通过，实验 008 记为已验收 | [实验 008](experiments/008-wifi-control.md)；IP 由 DHCP 分配；验收证据为用户观察 |
+| 2026-11-08 | 实验 009 第一阶段：新增 `AudioEngine` 与 `audio beep|stop|status`，ESP-IDF legacy I²S TX、16kHz/16bit/立体声、非阻塞分块播放、低幅度 880Hz/300ms 提示音；三环境构建通过，烧录后 `--no-audio-sound` 完整回归 1050 项通过；首次实际发声待用户观察 | [实验 009](experiments/009-audio-output.md)；首次提示音保留给用户 |
+| 2026-11-08 | 实验 009 首次发声验收：排查确认开发板 `5Vin` 为输入、不能给功放供电；改用与舵机共用的外部 5V 并共地后，用户确认听到提示音；完整回归 1075 项通过 | [实验 009](experiments/009-audio-output.md)；证据为用户观察 |
 
 ## 维护方法
 

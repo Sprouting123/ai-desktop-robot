@@ -31,10 +31,11 @@
 - 首个实验只连接 USB。新增模块前先确认其型号、供电、接线与所占 GPIO，再修改代码和连接硬件。
 - `ESP.getPsramSize()` 是堆容量，略小于物理 8 MB；容量校验应区分物理容量与分配器开销，参照当前程序实现。
 - ESP32-S3 的 LEDC 最大分辨率为 14 位；50Hz 舵机 PWM 不能沿用经典 ESP32 的 16/20 位配置。实验 005 使用 14 位，实测 `actual_hz=50`。Arduino-ESP32 2.0.17 中通道 0/1 共用定时器 0（`timer = (channel / 2) % 4`），同组通道必须使用相同频率和分辨率；实验 006 的两只舵机均为 50Hz/14 位，因此可以分别使用通道 0 和 1。
+- 开发板排针上的 `5Vin` 是**供电输入**，只进不出；实测悬空约 2V，不能给 MAX98357A、舵机等外部负载供电。外部负载使用独立外部 5V 并与 ESP32 共地。
 
-## 当前固件接口（实验 008）
+## 当前固件接口（实验 009）
 
-- 当前 `src/main.cpp` 保留[串口命令实验 002](docs/experiments/002-serial-led.md)，上电 `off`，按 `red` / `green` / `blue` / `off` 改变并保持状态；`status` 和 `help` 不改变灯光。不再自动循环。启动标记为 `[experiment 008] Wi-Fi LAN control / Arduino`。
+- 当前 `src/main.cpp` 保留[串口命令实验 002](docs/experiments/002-serial-led.md)，上电 `off`，按 `red` / `green` / `blue` / `off` 改变并保持状态；`status` 和 `help` 不改变灯光。不再自动循环。启动标记为 `[experiment 009] MAX98357A I2S audio / Arduino`。
 - `i2cscan` 使用 Wire、SDA GPIO8 / SCL GPIO9、100kHz，扫描 0x08–0x77；每次事务超时 25ms。扫描为同步命令，期间暂不处理新串口命令，不改变 RGB 状态；应答地址不能证明 OLED 型号或显示效果。详见[实验 003](docs/experiments/003-i2c-scan.md)。
 - OLED 使用 U8g2 2.36.17；上电默认 SH1106 128×64 并直接进入眼睛画面。`oled_sh1106` / `oled_ssd1306` 仍可切换测试图，`oled_status` 查询当前驱动与画面类型（`screen=eyes|test`）。复位恢复 SH1106 与 normal 表情，不持久化选择；`off` 仅关闭 RGB。地址保持 0x3C，硬件 I²C 保持 100kHz。日志中的绘图调用和 ACK 不代表光学验收或型号鉴定。
 - 实验 004 新增 `eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right>`、`eyes blink`、`eyes status`，以及仅用于软件调试的 `eyes dump`（输出 64×32 ASCII 帧缓冲，不发 I²C，约阻塞串口 0.2s）。表情引擎用 `millis()` 非阻塞状态机，自动眨眼 3–5s（悲伤/安慰/忧郁/尴尬更慢），闭眼保持 200ms；只在画面变化时重绘，并按 32 字节区域增量传输，每轮 `loop()` 最多传输一个区域，串口命令始终优先处理。详见[实验 004](docs/experiments/004-oled-eyes.md)。
@@ -44,6 +45,8 @@
 - `mood happy|sad|angry|normal|status|stop` 把一个表情和一个动作绑定为云端 AI 的软件入口：happy → happy + wiggle 80–100°×4（16 步）；sad → sad + wiggle 85–95°×3、停留 700ms（12 步）；angry → angry + alternate 82–98°×4、停留 150ms（8 步）；normal → normal + neutral。`start()` 先启动动作，失败时表情不变；`mood stop` 停止动作、关闭脉冲，**屏幕保留当前表情**并在回复中写 `screen=kept`；`eyes <表情>` 只清除 mood 标签而不停止动作；`motion ...` 清除 mood 标签但保留表情。所有 `eyes` 命令保留，不会隐式启动动作。
 - SG90 供电必须使用外部 5V：红线接外部正极、棕线接外部负极、信号接对应 GPIO（1 → GPIO4、2 → GPIO5），ESP32 GND 与外部电源负极共地；禁止把外部 5V 接到 3V3 或任何 GPIO。首次测试不安装摇臂；开发、烧录和自动串口测试期间保持外部 5V 断开；实物运动必须由用户上电观察确认。2026-11-07 用户已先后确认舵机 1、舵机 2 单独测试和双舵机同时运动正常，`servo both center` 的实物效果也正常；运动中 `servo both stop` 因 60°/s 动作过快未能人工复现，只有软件检查证据（第二阶段约 20 秒的 `motion wiggle` 可用于补做）。双舵机供电余量、实际角度、方向标定、电流和带载情况未测量。第二阶段已于 2026-11-07 由用户接通外部 5V 逐项确认四个动作、运动中 `motion stop`、四个 mood 和 `mood stop` 正常；验收以用户观察为依据，未做定量测量。
 - 实验 007：2026-11-08 用户确认纸板机械原型完成后，安装的两只舵机与 OLED 情绪联动运行正常；纸板尺寸、电流、供电稳定性、实际角度、噪声与带载未测量。详见[实验 007](docs/experiments/007-cardboard-prototype.md)。
+- 实验 009 新增 `src/audio_engine.h/.cpp`：ESP-IDF legacy I²S TX 驱动（Arduino-ESP32 2.0.17 自带 `driver/i2s.h`），端口 0、BCLK GPIO7 / LRC GPIO15 / DIN GPIO6、无 MCLK；16kHz、16bit、双声道同一样本；4×240 帧 DMA；`tx_desc_auto_clear`；880Hz、300ms、满量程 15%、首尾 5ms 淡入淡出。`audio beep`（播放中重启）、`audio stop`（立即静音）、`audio status`；上电只初始化不发声。`update()` 每轮最多写一块，`i2s_write` 超时为 0，DMA 满时下一轮再写。初始化失败每次 `beep` 重试一次并返回 `ERR audio_not_ready`。详见[实验 009](docs/experiments/009-audio-output.md)。
+- MAX98357A 供电与接线：VIN、SD → 外部 5V 正极（与两只 SG90 共用，标称 5V 5A，带载未测量）；GND → 外部 5V 负极并与 ESP32 GND 共地；DIN/BCLK/LRC → GPIO6/7/15、GAIN 悬空；扬声器只接 SPK+/SPK−，**不得把扬声器任一极接电路 GND**。开发板 `5Vin` 是输入引脚、不能对外供电（实测约 2V）；首次发声必须由用户发送 `audio beep` 触发；构建、烧录和自动测试期间舵机外部 5V 保持断开。出现爆音、功放异常发热、电压下跌或 ESP32 重启时立即断开外部 5V。2026-11-08 用户确认外部 5V 供电、SD 接高后首次发声正常。
 - 实验 008 新增 `src/wifi_manager.*`、`src/web_server.*`、`src/web_ui.h`、`src/secrets.example.h`；`main.cpp` 每轮 `loop()` 先调用 `wifiManager.update()` 与 `webServer.update()`，再更新 OLED 与动作/情绪，全部非阻塞。新增串口命令 `wifi status`、`wifi reconnect`、`web status`（`WEB listening=... requests=... writes=... rejected=... rate_limited=... auth=...`）。详见[实验 008](docs/experiments/008-wifi-control.md)。
 - Wi-Fi 仅 STA、家庭 2.4GHz；状态机为 disabled/connecting/connected/backoff，单次连接超时 20s，失败退避 2/5/10/20/30s，`setAutoReconnect(false)`、`setSleep(false)`、`persistent(false)`。SSID 为空时打印 `WIFI_DISABLED` 且不启动 Wi-Fi。日志含 `WIFI_CONNECTING`、`WIFI_CONNECTED`（IP、RSSI、channel）、`WIFI_TIMEOUT`、`WIFI_RETRY`、`WIFI_LOST`、`WIFI_RECONNECT`；密码与令牌绝不打印。
 - 局域网 HTTP 使用基于 `WiFiServer` 的自实现最小服务器（内置 `WebServer` 会先读完整请求体，不满足上限要求）：80 端口、单连接、`Connection: close`、每轮最多读 64 字节；请求缓冲 1024 字节、请求体上限 128 字节、头/体超时 3s；响应用 `MSG_DONTWAIT` 分多轮发送，客户端停止读取不会卡住主循环，5s 未发完即关闭。接口仅 `GET /`、`GET /api/status`、`GET /favicon.ico`、`POST /api/mood`、`POST /api/motion`；名称走允许列表并复用现有 `MoodController`/`MotionEngine`，无串口透传，不能绕过 60–120° 限位。
@@ -55,9 +58,9 @@
 - 接收使用固定 32 字符缓冲，每轮最多读取 64 个已到达字节；支持 CR、LF、CRLF、首尾空白和大小写。过长或非法的一整行必须丢弃，到换行后再恢复，不能执行截断前缀或后缀。
 - `status` 表示最后命令状态，不代表光学测量。串口 ACK 与用户灯光验收分别记录。
 - 监视器已配置 `monitor_echo=yes`、`monitor_eol=LF` 和 `send_on_enter`，在终端直接输入英文命令并按回车发送。
-- 当前实机回归脚本为 `.venv/bin/python scripts/test_serial_wifi.py`；先关闭其他监视器，并保持舵机外部 5V 断开，除非用户明确同意让自动测试驱动舵机。脚本核对设备身份，会复位、回归实验 002/003/004 与全部舵机/动作/情绪命令、检查十种表情与 ASCII 帧缓冲、眨眼/自动眨眼、双通道状态、旧命令兼容、两只舵机的解析/限位/渐进运动/独立停止/`servo both`、动作序列与 mood 映射，并新增 Wi-Fi 启动状态、`wifi`/`web` 串口命令和令牌泄漏检查。设备已连接 Wi-Fi 且本地 `src/secrets.h` 中有有效 `API_TOKEN` 时，还覆盖页面、`/api/status`、401/403、允许列表、畸形/超大请求、GET/POST 方法限制、令牌误放 URL、限流、动作期间 HTTP 与 OLED 并行、`wifi reconnect` 后 HTTP 恢复；加 `--no-http` 可跳过。2026-11-08 Wi-Fi 凭据为空的固件 910 项、临时不可达 SSID 固件 903 项检查全部通过；随后在真实 Wi-Fi 下含 HTTP 的完整回归 1038 项通过（外部 5V 接通经用户授权）。脚本会过滤 `WIFI_*`、`WEB_LISTEN`、`WEB_AUTH` 等异步日志。`scripts/test_serial_motion.py` 对应实验 006 第二阶段固件，`scripts/test_serial_dual_servo.py` 对应第一阶段，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，`scripts/test_serial_led.py` 对应实验 003，均保留为历史记录。
+- 当前实机回归脚本为 `.venv/bin/python scripts/test_serial_wifi.py`；先关闭其他监视器，并保持舵机外部 5V 断开，除非用户明确同意让自动测试驱动舵机。脚本核对设备身份，会复位、回归实验 002/003/004 与全部舵机/动作/情绪命令、检查十种表情与 ASCII 帧缓冲、眨眼/自动眨眼、双通道状态、旧命令兼容、两只舵机的解析/限位/渐进运动/独立停止/`servo both`、动作序列与 mood 映射，并新增 Wi-Fi 启动状态、`wifi`/`web` 串口命令和令牌泄漏检查。设备已连接 Wi-Fi 且本地 `src/secrets.h` 中有有效 `API_TOKEN` 时，还覆盖页面、`/api/status`、401/403、允许列表、畸形/超大请求、GET/POST 方法限制、令牌误放 URL、限流、动作期间 HTTP 与 OLED 并行、`wifi reconnect` 后 HTTP 恢复；加 `--no-http` 可跳过。2026-11-08 Wi-Fi 凭据为空的固件 910 项、临时不可达 SSID 固件 903 项检查全部通过；随后在真实 Wi-Fi 下含 HTTP 的完整回归 1038 项通过（外部 5V 接通经用户授权）。实验 009 追加音频初始化/命令解析/空闲停止检查，并用 `--no-audio-sound` 跳开发声项，完整回归 1050 项通过；2026-11-08 首次发声确认后，完整回归（不加该参数，含播放/重启/停止状态机）1075 项通过。脚本会过滤 `WIFI_*`、`WEB_LISTEN`、`WEB_AUTH` 等异步日志。`scripts/test_serial_motion.py` 对应实验 006 第二阶段固件，`scripts/test_serial_dual_servo.py` 对应第一阶段，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，`scripts/test_serial_led.py` 对应实验 003，均保留为历史记录。
 - `diagnostics` 仍不驱动 LED，颜色命令返回 `ERR led_disabled`；`rgb_gpio38` 仍仅为其他版本的备选。本板保持 `rgb_gpio48`。
-- 实验 001–007 文档是历史验收记录，后续程序进入新实验时保留该记录；旧固件实现通过对应 Git 历史查阅。实验 008 的软件、联网与用户验收均已完成，细节见[实验 008](docs/experiments/008-wifi-control.md)。
+- 实验 001–007 文档是历史验收记录，后续程序进入新实验时保留该记录；旧固件实现通过对应 Git 历史查阅。实验 008 的软件、联网与用户验收均已完成，细节见[实验 008](docs/experiments/008-wifi-control.md)；实验 009 的构建、回归与首次发声验收也已完成，细节见[实验 009](docs/experiments/009-audio-output.md)。
 
 ## 工程与验证方法
 

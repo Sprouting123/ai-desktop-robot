@@ -1,16 +1,17 @@
-"""Live regression check for experiment 008 (Wi-Fi LAN control).
+"""Live regression check for experiment 009 (MAX98357A I2S audio).
 
 Run with .venv/bin/python scripts/test_serial_wifi.py after closing all
 monitors and with the servos' external 5 V supply disconnected. It regresses
 the experiment 002/003/004 commands, both servo channels, the motion/mood
-engine and the new Wi-Fi/web serial status commands. When the board is already
-connected to Wi-Fi and a token is available locally, it also exercises the HTTP
-API and the embedded control page. It resets this board and leaves the RGB LED
-off, both servo outputs disabled and the normal eye screen showing.
+engine, the Wi-Fi/web serial status commands and the new audio commands. When
+the board is already connected to Wi-Fi and a token is available locally, it
+also exercises the HTTP API and the embedded control page. It resets this
+board and leaves the RGB LED off, both servo outputs disabled, audio silent and
+the normal eye screen showing.
 
 Every check here is a software/serial observation; it cannot prove the physical
-OLED appearance or servo movement. Do not use it as the physical acceptance
-test, and never run it with the external 5 V supply connected.
+OLED appearance, servo movement or audible sound. Do not use it as the physical
+acceptance test, and never run it with the external 5 V supply connected.
 """
 
 import argparse
@@ -26,7 +27,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-BOOT = "[experiment 008] Wi-Fi LAN control / Arduino"
+BOOT = "[experiment 009] MAX98357A I2S audio / Arduino"
 HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | "
         "oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|"
         "sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | "
@@ -36,7 +37,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "servo both center | servo both stop | motion neutral | motion wiggle | "
         "motion together | motion alternate | motion stop | motion status | "
         "mood happy | mood sad | mood angry | mood normal | mood status | "
-        "mood stop | wifi status | wifi reconnect | web status; max_line=32; endings=LF/CR/CRLF")
+        "mood stop | wifi status | wifi reconnect | web status | audio beep | "
+        "audio stop | audio status; max_line=32; endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -83,6 +85,13 @@ WIFI_RE = re.compile(
 WEB_RE = re.compile(
     r"WEB listening=([01]) port=80 requests=(\d+) writes=(\d+) "
     r"rejected=(\d+) rate_limited=(\d+) auth=(enabled|disabled)")
+AUDIO_RE = re.compile(
+    r"AUDIO state=(idle|playing|unavailable) ready=([01]) driver=i2s_std "
+    r"bclk=(\d+) lrck=(\d+) din=(\d+) rate_hz=(\d+) bits=16 channels=2 "
+    r"tone_hz=(\d+) duration_ms=(\d+) amplitude_pct=(\d+) plays=(\d+) "
+    r"stops=(\d+) errors=(\d+) last_error=(-?\d+)")
+AUDIO_BEEP = ("OK audio=beep tone_hz=880 duration_ms=300 amplitude_pct=15 "
+              "restarted={0}")
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
 # serial command window and are not a response to that command.
@@ -112,6 +121,10 @@ def main():
                         help="skip HTTP checks even when Wi-Fi is connected")
     parser.add_argument("--no-reconnect", action="store_true",
                         help="skip the Wi-Fi reconnect check")
+    parser.add_argument(
+        "--no-audio-sound", action="store_true",
+        help="skip the checks that make the speaker sound; the first tone must "
+             "be started by the user, so use this before the physical test")
     args = parser.parse_args()
     api_token = load_token(args.token_file)
     if api_token is not None and len(api_token) < 16:
@@ -271,6 +284,16 @@ def main():
         print("  " + lines[0], flush=True)
         return match
 
+    def audio_status(name, state=None, seconds=0.18):
+        lines = [line for line in send(b"audio status\n", seconds)
+                 if line.startswith("AUDIO ")]
+        match = AUDIO_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        print("  " + lines[0], flush=True)
+        return match
+
     def web_listening(name, timeout=10.0):
         deadline = time.monotonic() + timeout
         match = web_status(name)
@@ -393,6 +416,73 @@ def main():
         if wifi_boot.group(2) == "0":
             expect("wifi reconnect is rejected without credentials", b"wifi reconnect\n",
                    ["ERR wifi_disabled; fill in src/secrets.h and rebuild"])
+
+        # --- experiment 009 audio -----------------------------------------
+        check("audio I2S driver initializes silent",
+              "AUDIO_INIT ready=1 driver=i2s_std port=0 bclk=7 lrck=15 din=6 "
+              "rate_hz=16000 bits=16 channels=2 dma=4 x 240 frames "
+              "tone_hz=880 duration_ms=300 amplitude_pct=15" in startup, True)
+        audio_boot = audio_status("boot audio is idle", "idle")
+        check("boot audio driver is ready", audio_boot.group(2), "1")
+        check("audio uses the documented pins",
+              (audio_boot.group(3), audio_boot.group(4), audio_boot.group(5)),
+              ("7", "15", "6"))
+        check("audio uses the standard first-test format",
+              (audio_boot.group(6), audio_boot.group(7),
+               audio_boot.group(8), audio_boot.group(9)),
+              ("16000", "880", "300", "15"))
+        check("boot does not play a tone", audio_boot.group(10), "0")
+        check("boot audio reports no error",
+              (audio_boot.group(12), audio_boot.group(13)), ("0", "0"))
+        expect("audio needs a subcommand", b"audio\n",
+               ["ERR audio_usage; use help"])
+        expect("audio rejects unknown subcommands", b"audio play\n",
+               ["ERR audio_usage; use help"])
+        expect("audio rejects extra arguments", b"audio beep now\n",
+               ["ERR audio_usage; use help"])
+        expect("audio stop is safe while idle", b"audio stop\n",
+               ["OK audio=stopped output=silent"])
+        check("a rejected audio command does not start playback",
+              audio_status("still idle after usage errors", "idle").group(10), "0")
+
+        if args.no_audio_sound:
+            print("SKIP audio playback checks (--no-audio-sound); the first "
+                  "tone must be started by the user", flush=True)
+        else:
+            # Short observation windows: the 300 ms tone must still be
+            # streaming while these commands are answered, which also shows the
+            # I2S writes do not block the command loop.
+            expect("audio beep acknowledged", b"audio beep\n",
+                   [AUDIO_BEEP.format("0")], 0.06)
+            states = [audio_status(f"audio status during playback {index}",
+                                   seconds=0.05).group(1) for index in range(3)]
+            check("audio reports continuous playback", states,
+                  ["playing", "playing", "playing"])
+            motion_while_audio = [line for line in send(b"motion status\n", 0.06)
+                                  if line.startswith("MOTION ")]
+            check("motion answers while a tone plays", len(motion_while_audio), 1)
+            check("a beep does not start a motion",
+                  motion_while_audio[0].split()[1].split("=")[1], "none")
+            time.sleep(0.4)
+            audio_status("the tone finishes without a command", "idle")
+
+            expect("audio beep after a finished tone", b"audio beep\n",
+                   [AUDIO_BEEP.format("0")], 0.06)
+            expect("audio beep restarts while playing", b"audio beep\n",
+                   [AUDIO_BEEP.format("1")], 0.06)
+            restarted = audio_status("restart keeps playing", "playing", 0.05)
+            check("every trigger incremented the play counter",
+                  int(restarted.group(10)) >= 3, True)
+            expect("audio stop interrupts playback", b"audio stop\n",
+                   ["OK audio=stopped output=silent"])
+            stopped = audio_status("audio stop returns to idle", "idle")
+            check("stop counter advanced", int(stopped.group(11)) >= 1, True)
+            check("audio errors stay at zero after stop",
+                  (stopped.group(12), stopped.group(13)), ("0", "0"))
+            time.sleep(0.4)
+            check("a stopped tone does not resume by itself",
+                  audio_status("still idle after wait", "idle").group(10),
+                  stopped.group(10))
 
         # --- experiment 002 regression ------------------------------------
         expect("red with LF", b"red\n", ["OK state=red pin=48"])
@@ -1493,13 +1583,13 @@ def main():
         status("final RGB state", "off")
         oled_status("final screen is the eye screen", "SH1106", "eyes", 1)
         print(f"PASS: {passed} checks; physical eye shapes, emotion readability, "
-              f"flash-free display and actual dual-servo movement still require "
-              f"user confirmation.", flush=True)
+              f"flash-free display, actual dual-servo movement and audible sound "
+              f"still require user confirmation.", flush=True)
     finally:
         if port.is_open:
             # Terminate any partial/invalid line, then leave a safe, visible state:
-            # both servo outputs off, RGB off, normal eye screen.
-            port.write(b"\nservo both stop\noff\neyes normal\n")
+            # audio silent, both servo outputs off, RGB off, normal eye screen.
+            port.write(b"\naudio stop\nservo both stop\noff\neyes normal\n")
             port.flush()
             collect(0.4)
             port.close()

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "audio_engine.h"
 #include "eyes_engine.h"
 #include "mood_controller.h"
 #include "motion_engine.h"
@@ -55,6 +56,9 @@ motion::Engine motionEngine(servo1Controller, servo2Controller);
 // Mood couples one expression with one motion profile through the existing
 // eyes and motion entry points.
 mood::Controller moodController(eyesEngine, motionEngine);
+// Audio is an independent I2S path (GPIO6/7/15). It shares no state with the
+// eyes, servos or network layer and produces silence until an explicit beep.
+audio::Engine audioEngine;
 // Networking only calls the same controllers as the serial commands. It does
 // not own a second copy of expression, motion or servo state.
 wifi::Manager wifiManager;
@@ -102,7 +106,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio stop | audio status; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -459,6 +463,38 @@ void executeWeb(char* args) {
   Serial.println("ERR web_usage; use help");
 }
 
+// Audio commands only control the local tone generator. They never trigger a
+// motion, expression or network action, and playback is never started at boot.
+void executeAudio(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR audio_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    audioEngine.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    audioEngine.stop();
+    Serial.println("OK audio=stopped output=silent");
+    return;
+  }
+  if (std::strcmp(args, "beep") == 0) {
+    const bool wasPlaying = audioEngine.playing();
+    if (!audioEngine.beep()) {
+      // Initialization is retried inside beep(); a hard failure is reported
+      // instead of crashing or blocking the loop.
+      Serial.println("ERR audio_not_ready");
+      return;
+    }
+    Serial.printf("OK audio=beep tone_hz=%u duration_ms=%u amplitude_pct=%u restarted=%u\n",
+                  audioEngine.toneHz(), audioEngine.durationMs(),
+                  audioEngine.amplitudePercent(), wasPlaying ? 1U : 0U);
+    return;
+  }
+  Serial.println("ERR audio_usage; use help");
+}
+
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
 
 void executeCommand() {
@@ -510,6 +546,11 @@ void executeCommand() {
     char* args = text + 3;
     while (isPadding(*args)) ++args;
     executeWeb(args);
+  } else if (std::strncmp(text, "audio", 5) == 0 &&
+             (text[5] == '\0' || isPadding(text[5]))) {
+    char* args = text + 5;
+    while (isPadding(*args)) ++args;
+    executeAudio(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -590,7 +631,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 008] Wi-Fi LAN control / Arduino");
+  Serial.println("\n[experiment 009] MAX98357A I2S audio / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -601,6 +642,9 @@ void setup() {
   // the first flash of experiment 006 cannot start an automatic sweep.
   servo1Controller.begin("SERVO1");
   servo2Controller.begin("SERVO2");
+  // Installing I2S only drives clocks with zeroed DMA data. No tone is played
+  // at boot; the first sound requires an explicit `audio beep`.
+  audioEngine.begin();
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -624,6 +668,8 @@ void loop() {
   // a whole HTTP request, so the OLED and servo schedules below keep running.
   wifiManager.update();
   webServer.update();
+  // Audio streams one small chunk per loop and never waits for the DMA queue.
+  audioEngine.update();
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
   // The motion engine only advances a state machine and sets new targets; it
