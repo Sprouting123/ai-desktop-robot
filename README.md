@@ -6,6 +6,7 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 
 - [协作规则](AGENTS.md)：工作流程、硬件约束、当前串口接口与 Git 同步规则。
 - [当前进度与交接](docs/progress.md)：里程碑、验证证据、未决问题和下一步。
+- [实验 010：INMP441 麦克风采集](docs/experiments/010-microphone.md)：I²S1 RX、`mic status/start/level/stop` 与近期峰值/RMS 统计；三环境构建、烧录与 1151–1152 项回归通过；该模块数据实际只在右声道槽，固件读取右声道；2026-11-08 用户讲话观察验收通过。
 - [实验 009：MAX98357A I²S 音频](docs/experiments/009-audio-output.md)：I²S 提示音引擎、内嵌中文语音（`audio hello`）与非阻塞播放；第一阶段首次发声与第二阶段中文语音试听均已由用户于 2026-11-08 确认；第二阶段 1103 项回归通过。
 - [实验 008：Wi-Fi 联网与局域网控制](docs/experiments/008-wifi-control.md)：非阻塞 STA 连接、令牌保护的 HTTP API、手机控制页；已联网并通过 1038 项回归，用户报告页面与远程控制验收通过。
 - [实验 007：纸板机械原型](docs/experiments/007-cardboard-prototype.md)：已验收的整机机械安装记录与未测量边界。
@@ -16,7 +17,7 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 - [实验 002：串口命令控制 RGB](docs/experiments/002-serial-led.md)：已验收的 RGB 命令基线、串口测试及 VS Code 操作步骤。
 - [实验 001：RGB 自动循环](docs/experiments/001-rgb-led.md)：已归档的首次实验，记录保持不变。
 
-## 当前功能：I²S 提示音与中文语音、Wi-Fi 局域网控制、OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
+## 当前功能：I²S 提示音与中文语音、INMP441 麦克风采集、Wi-Fi 局域网控制、OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
 
 Ubuntu + VS Code / PlatformIO + Arduino；ESP32-S3、16 MB Flash、8 MB PSRAM、GPIO48 均已验证。默认环境 `rgb_gpio48`。
 
@@ -32,10 +33,12 @@ Ubuntu + VS Code / PlatformIO + Arduino；ESP32-S3、16 MB Flash、8 MB PSRAM、
 
 实验 009 增加独立的 I²S 音频输出：MAX98357A 功放 DIN → GPIO6、BCLK → GPIO7、LRC → GPIO15；VIN 与 SD → 外部 5V 正极（与两只舵机共用），GND 与 ESP32 共地，扬声器只接 SPK+/SPK−。开发板 `5Vin` 是输入引脚，不能给功放供电。`audio beep` 播放一次 880Hz、300ms、15% 幅度的提示音（首尾 5ms 淡入淡出），`audio hello` 播放内嵌的中文语音“你好，我是你的 AI 桌宠！”（Edge TTS `zh-CN-XiaoxiaoNeural`，16kHz/16bit/单声道，78,828 字节、2.463s，固件音量 60%），`audio stop` 立即停止并静音，`audio status` 查询源、资源长度、驱动与播放状态。语音由 `board_build.embed_files` 只读链接进 flash，播放时每次只取 240 帧，不整段复制到 RAM；`AudioEngine` 分块驱动 DMA，`i2s_write` 超时为零，不阻塞 OLED、Wi-Fi 与串口；上电只初始化，不自动发声。三环境构建、烧录与 1103 项完整回归通过（外部 5V 断开）；2026-11-08 用户确认第一阶段首次发声，并在接通外部 5V 后确认 `audio hello` 试听成功。音量、音质与供电余量未测量，见[实验 009](docs/experiments/009-audio-output.md) 与 `assets/audio/README.md`。功放与舵机共用外部 5V，不要同时满负荷运行。
 
+实验 010 增加 INMP441 数字麦克风输入：VDD → 3V3、GND → GND、SCK → GPIO16、WS → GPIO17、SD → GPIO18、L/R → GND，使用 `I2S_NUM_1` RX、16kHz/32bit 槽、4×256 帧 DMA，与扬声器的 `I2S_NUM_0` 互不影响。该模块实测数据只出现在右声道槽，固件按右声道读取。上电只打印配置、不安装驱动也不采集；`mic start` 启动采集，`mic level` 输出最近约 0.5 秒窗口的 `peak`/`rms`、百分比、采样计数与 `signal=idle|no_data|zero|ok`，`mic stop` 停止并保留最后窗口，`mic status` 查询驱动与计数。采集完全非阻塞，不保存、不上传音频。2026-11-08 用户实测安静时 peak 1%、说话时 peak 6%，第一阶段记为已验收；灵敏度、噪声底与频响未测量，第二阶段（3 秒录音与 WAV）尚未开始，见[实验 010](docs/experiments/010-microphone.md)。
+
 原有串口命令保留：`red`、`green`、`blue`、`off`、`status`、`help`、`i2cscan`、`oled_sh1106`、`oled_ssd1306`、`oled_status`。颜色持续保持，不自动切换；输入长度有上限，异常行不会执行。`i2cscan` 使用 GPIO8/9、100kHz 扫描 0x08–0x77；OLED 测试图与眼睛画面可互相切换，`oled_status` 显示当前驱动和画面类型。SH1106 已获用户实物显示确认，SSD1306 测试图由用户反馈异常，因此眼睛固定使用 SH1106；控制器型号仍未鉴定。实验 004 的十种表情与眨眼已于 2026-11-07 获用户实物验收，最新实测状态见实验 004。实验 007 的纸板机械原型于 2026-11-08 获用户确认：安装后两只舵机与 OLED 情绪联动正常；尺寸、电流和供电稳定性未测量。
 
 在 VS Code 运行 **PlatformIO: Serial Monitor**，点击监视器终端后直接输入命令并按 Enter。已启用本地回显与回车发送，Ctrl-C 退出。表情逐项验收步骤见实验 004。
 
-在项目根目录使用 `.venv/bin/pio run` 构建、`.venv/bin/pio run -t upload` 烧录、`.venv/bin/pio device monitor` 打开监视器。关闭监视器并保持舵机外部 5V 断开后，可运行 `.venv/bin/python scripts/test_serial_wifi.py` 重复当前固件的实机检查；脚本会复位板卡、回归旧命令、检查十种表情与双舵机通道，覆盖动作序列、中途停止、切换、手动接管和 mood 映射，以及音频初始化、命令解析、提示音/中文语音的播放、重启、停止与自然结束状态机；在设备已联网且本地令牌可用时测试 HTTP API 与页面（`--no-http` 可跳过），最后关闭两只舵机输出、音频静音、RGB 熄灯、恢复 SH1106 眼睛画面。首次实际发声前使用 `--no-audio-sound` 跳过发声项；当前固件完整回归为 1103 项，外部 5V 保持断开。`scripts/test_serial_motion.py` 对应实验 006 第二阶段固件，`scripts/test_serial_dual_servo.py` 对应第一阶段，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，均保留为历史记录。
+在项目根目录使用 `.venv/bin/pio run` 构建、`.venv/bin/pio run -t upload` 烧录、`.venv/bin/pio device monitor` 打开监视器。关闭监视器并保持舵机外部 5V 断开后，可运行 `.venv/bin/python scripts/test_serial_wifi.py` 重复当前固件的实机检查；脚本会复位板卡、回归旧命令、检查十种表情与双舵机通道，覆盖动作序列、中途停止、切换、手动接管和 mood 映射，以及音频初始化、命令解析、提示音/中文语音的播放、重启、停止与自然结束状态机，和麦克风的按需初始化、启动/停止、统计窗口、并发播放与错误计数；在设备已联网且本地令牌可用时测试 HTTP API 与页面（`--no-http` 可跳过），最后关闭两只舵机输出、音频静音、RGB 熄灯、恢复 SH1106 眼睛画面。首次实际发声前使用 `--no-audio-sound` 跳过发声项；当前固件完整回归为 1151 项（同一脚本的通过数会因舵机停止时机有 ±1 浮动），外部 5V 保持断开。`scripts/test_serial_motion.py` 对应实验 006 第二阶段固件，`scripts/test_serial_dual_servo.py` 对应第一阶段，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，均保留为历史记录。
 
-代码分为 `src/main.cpp`（串口、RGB、I²C、屏幕、舵机、动作与网络命令）、`src/eyes_state.*`（纯时间状态机）、`src/eyes_render.*`（表情绘图）、`src/eyes_engine.*`（动画调度与增量刷新）、`src/servo_controller.*`（PWM、限位与渐进运动）、`src/motion_engine.*`（动作序列状态机）、`src/mood_controller.*`（表情与动作映射）、`src/wifi_manager.*`（非阻塞 STA 状态机）、`src/web_server.*`（受限 HTTP API）、`src/web_ui.h`（手机页面）、`src/audio_engine.*`（I²S/DMA 输出层）、`src/audio_source.*`（提示音与 flash PCM 源）、`src/voice_clips.h`（语音资源元数据），音频资源在 `assets/audio/`，配置在 `platformio.ini`，本地凭据在 `src/secrets.h`（不入库）。`diagnostics` 不驱动 LED；`rgb_gpio38` 仅保留作其他板卡版本的备选。当前由 USB 供电；用户报告 OLED VCC/GND/SDA/SCL 分别接 3V3/GND/GPIO8/GPIO9，舵机 1 信号接 GPIO4，红/棕线接外部 5V 正/负极并与 ESP32 共地；舵机 2 信号接 GPIO5。2026-11-07 用户已确认两只舵机单独测试与双舵机同时运动正常；运动中 `servo both stop` 未实物复现，实际角度与电流未测量；完整厂家与 PCB 版本仍未确认。
+代码分为 `src/main.cpp`（串口、RGB、I²C、屏幕、舵机、动作与网络命令）、`src/eyes_state.*`（纯时间状态机）、`src/eyes_render.*`（表情绘图）、`src/eyes_engine.*`（动画调度与增量刷新）、`src/servo_controller.*`（PWM、限位与渐进运动）、`src/motion_engine.*`（动作序列状态机）、`src/mood_controller.*`（表情与动作映射）、`src/wifi_manager.*`（非阻塞 STA 状态机）、`src/web_server.*`（受限 HTTP API）、`src/web_ui.h`（手机页面）、`src/audio_engine.*`（I²S/DMA 输出层）、`src/audio_source.*`（提示音与 flash PCM 源）、`src/voice_clips.h`（语音资源元数据），`src/microphone_engine.*`（INMP441 I²S RX 与近期统计），音频资源在 `assets/audio/`，配置在 `platformio.ini`，本地凭据在 `src/secrets.h`（不入库）。`diagnostics` 不驱动 LED；`rgb_gpio38` 仅保留作其他板卡版本的备选。当前由 USB 供电；用户报告 OLED VCC/GND/SDA/SCL 分别接 3V3/GND/GPIO8/GPIO9，舵机 1 信号接 GPIO4，红/棕线接外部 5V 正/负极并与 ESP32 共地；舵机 2 信号接 GPIO5。2026-11-07 用户已确认两只舵机单独测试与双舵机同时运动正常；运动中 `servo both stop` 未实物复现，实际角度与电流未测量；完整厂家与 PCB 版本仍未确认。

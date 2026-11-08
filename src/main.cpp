@@ -9,6 +9,7 @@
 #include "audio_engine.h"
 #include "voice_clips.h"
 #include "eyes_engine.h"
+#include "microphone_engine.h"
 #include "mood_controller.h"
 #include "motion_engine.h"
 #include "servo_controller.h"
@@ -60,6 +61,9 @@ mood::Controller moodController(eyesEngine, motionEngine);
 // Audio is an independent I2S path (GPIO6/7/15). It shares no state with the
 // eyes, servos or network layer and produces silence until an explicit beep.
 audio::Engine audioEngine;
+// The microphone owns I2S_NUM_1 in RX-only mode. It never installs a TX path
+// and does not share state with the speaker engine on I2S_NUM_0.
+mic::Engine microphoneEngine;
 // Networking only calls the same controllers as the serial commands. It does
 // not own a second copy of expression, motion or servo state.
 wifi::Manager wifiManager;
@@ -107,7 +111,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic stop; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -523,6 +527,40 @@ void executeAudio(char* args) {
   Serial.println("ERR audio_usage; use help");
 }
 
+// Microphone commands only control local capture. They never record to flash,
+// save a file, upload data or start a network action, and capture is off at
+// boot. `mic level` reads the rolling window statistics; it never blocks.
+void executeMic(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR mic_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    microphoneEngine.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "level") == 0) {
+    microphoneEngine.printLevel();
+    return;
+  }
+  if (std::strcmp(args, "start") == 0) {
+    const bool wasRunning = microphoneEngine.running();
+    if (!microphoneEngine.start()) {
+      Serial.println("ERR mic_not_ready");
+      return;
+    }
+    Serial.printf("OK mic=started running=1 restarted=%u\n",
+                  wasRunning ? 1U : 0U);
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    microphoneEngine.stop();
+    Serial.println("OK mic=stopped running=0");
+    return;
+  }
+  Serial.println("ERR mic_usage; use help");
+}
+
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
 
 void executeCommand() {
@@ -579,6 +617,11 @@ void executeCommand() {
     char* args = text + 5;
     while (isPadding(*args)) ++args;
     executeAudio(args);
+  } else if (std::strncmp(text, "mic", 3) == 0 &&
+             (text[3] == '\0' || isPadding(text[3]))) {
+    char* args = text + 3;
+    while (isPadding(*args)) ++args;
+    executeMic(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -659,7 +702,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 009] MAX98357A I2S audio / Arduino");
+  Serial.println("\n[experiment 010] INMP441 microphone input / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -681,6 +724,9 @@ void setup() {
       hello.name, static_cast<unsigned long>(hello.bytes),
       static_cast<unsigned long>(hello.bytes / sizeof(int16_t)),
       static_cast<unsigned long>(hello.sampleRate), hello.volumePercent);
+  // Report the microphone plan without installing the RX driver: capture stays
+  // off and the INMP441 sees no clocks until an explicit `mic start`.
+  microphoneEngine.begin();
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -706,6 +752,8 @@ void loop() {
   webServer.update();
   // Audio streams one small chunk per loop and never waits for the DMA queue.
   audioEngine.update();
+  // One non-blocking RX read per loop; capture only runs after `mic start`.
+  microphoneEngine.update();
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
   // The motion engine only advances a state machine and sets new targets; it

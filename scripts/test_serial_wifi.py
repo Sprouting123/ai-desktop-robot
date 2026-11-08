@@ -28,7 +28,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-BOOT = "[experiment 009] MAX98357A I2S audio / Arduino"
+BOOT = "[experiment 010] INMP441 microphone input / Arduino"
 HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | "
         "oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|"
         "sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | "
@@ -39,8 +39,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "motion together | motion alternate | motion stop | motion status | "
         "mood happy | mood sad | mood angry | mood normal | mood status | "
         "mood stop | wifi status | wifi reconnect | web status | audio beep | "
-        "audio hello | audio stop | audio status; max_line=32; "
-        "endings=LF/CR/CRLF")
+        "audio hello | audio stop | audio status | mic status | mic start | "
+        "mic level | mic stop; max_line=32; endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -98,6 +98,20 @@ AUDIO_BEEP = ("OK audio=beep tone_hz=880 duration_ms=300 amplitude_pct=15 "
 AUDIO_HELLO = ("OK audio=hello clip=hello_zh bytes=78828 frames=39414 "
                "duration_ms=2463 volume_pct=60 sample_rate_hz=16000 "
                "restarted={0}")
+MIC_RE = re.compile(
+    r"MIC state=(idle|running|error) ready=([01]) port=(\d+) bclk=(\d+) "
+    r"ws=(\d+) din=(\d+) sample_rate_hz=(\d+) bits_per_sample=32 "
+    r"bits_per_slot=(\d+) channel=right frames=(\d+) blocks=(\d+) reads=(\d+) "
+    r"timeouts=(\d+) zero_blocks=(\d+) errors=(\d+) last_error=(-?\d+)")
+MIC_LEVEL_RE = re.compile(
+    r"MIC_LEVEL state=(idle|running|error) signal=(idle|no_data|zero|ok) "
+    r"window_frames=(\d+) window_blocks=(\d+) peak=(\d+) rms=(\d+) "
+    r"peak_pct=(\d+) rms_pct=(\d+) total_frames=(\d+) zero_blocks=(\d+)")
+MIC_CONFIG = ("MIC_CONFIG installed=0 port=1 bclk=16 ws=17 din=18 "
+              "sample_rate_hz=16000 bits_per_slot=32 channel=right "
+              "dma=4 x 256 frames")
+MIC_INIT = ("MIC_INIT ready=1 port=1 bclk=16 ws=17 din=18 rate_hz=16000 "
+            "bits_per_slot=32 channel=right")
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
 # serial command window and are not a response to that command.
@@ -298,6 +312,28 @@ def main():
         check(name, match is not None, True)
         if state is not None:
             check(f"{name} state", match.group(1), state)
+        print("  " + lines[0], flush=True)
+        return match
+
+    def mic_status(name, state=None):
+        lines = [line for line in send(b"mic status\n")
+                 if line.startswith("MIC ")]
+        match = MIC_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        print("  " + lines[0], flush=True)
+        return match
+
+    def mic_level(name, state=None, signal=None):
+        lines = [line for line in send(b"mic level\n")
+                 if line.startswith("MIC_LEVEL ")]
+        match = MIC_LEVEL_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        if signal is not None:
+            check(f"{name} signal", match.group(2), signal)
         print("  " + lines[0], flush=True)
         return match
 
@@ -548,6 +584,85 @@ def main():
             check("voice playback did not leak heap",
                   int(eyes_status("heap after the voice").group(11)) > 50000,
                   True)
+
+        # --- experiment 010 microphone ------------------------------------
+        check("microphone configuration is reported without capture",
+              MIC_CONFIG in startup, True)
+        mic_boot = mic_status("boot leaves the microphone off", "idle")
+        check("boot microphone driver is not installed", mic_boot.group(2), "0")
+        check("microphone uses the documented RX pins and port",
+              (mic_boot.group(3), mic_boot.group(4), mic_boot.group(5),
+               mic_boot.group(6)), ("1", "16", "17", "18"))
+        check("microphone starts from a 16 kHz / 32-bit slot",
+              (mic_boot.group(7), mic_boot.group(8)), ("16000", "32"))
+        check("boot captured no microphone frames",
+              (mic_boot.group(9), mic_boot.group(11)), ("0", "0"))
+        boot_level = mic_level("boot level has no data", "idle", "idle")
+        check("boot level window is empty",
+              (boot_level.group(3), boot_level.group(5), boot_level.group(6)),
+              ("0", "0", "0"))
+        expect("mic needs a subcommand", b"mic\n",
+               ["ERR mic_usage; use help"])
+        expect("mic rejects unknown subcommands", b"mic record\n",
+               ["ERR mic_usage; use help"])
+        expect("mic start rejects extra arguments", b"mic start now\n",
+               ["ERR mic_usage; use help"])
+        expect("mic stop is safe while idle", b"mic stop\n",
+               ["OK mic=stopped running=0"])
+        expect("mic start acknowledged", b"mic start\n",
+               [MIC_INIT, "OK mic=started running=1 restarted=0"], 0.08)
+        started = mic_status("microphone reports running", "running")
+        check("microphone installed its RX driver", started.group(2), "1")
+        check("starting the microphone reports no error",
+              (started.group(14), started.group(15)), ("0", "0"))
+        time.sleep(0.7)
+        first_level = mic_level("microphone accumulates samples", "running")
+        check("capture produced a recent window",
+              (int(first_level.group(3)) > 0, int(first_level.group(4)) > 0),
+              (True, True))
+        check("signal is either real data or detected silence",
+              first_level.group(2) in ("ok", "zero"), True)
+        if first_level.group(2) == "zero":
+            check("silent input reports zero peak and RMS",
+                  (first_level.group(5), first_level.group(6)), ("0", "0"))
+        else:
+            check("non-silent input reports a non-zero peak",
+                  int(first_level.group(5)) > 0, True)
+        first_total = int(first_level.group(9))
+        time.sleep(0.3)
+        second_level = mic_level("microphone keeps reading", "running")
+        check("sample counter keeps increasing",
+              int(second_level.group(9)) > first_total, True)
+        eyes_status("OLED answers while the microphone runs")
+        motion_while_mic = [line for line in send(b"motion status\n", 0.06)
+                            if line.startswith("MOTION ")]
+        check("motion answers while the microphone runs",
+              len(motion_while_mic), 1)
+        expect("audio beep still works while the microphone runs",
+               b"audio beep\n", [AUDIO_BEEP.format("0")], 0.06)
+        expect("audio stop after the concurrent beep", b"audio stop\n",
+               ["OK audio=stopped output=silent"])
+        concurrent = mic_status("microphone survives speaker playback",
+                                "running")
+        check("concurrent speaker playback adds no microphone error",
+              (concurrent.group(14), concurrent.group(15)), ("0", "0"))
+        expect("mic start while running reports a restart", b"mic start\n",
+               ["OK mic=started running=1 restarted=1"], 0.08)
+        time.sleep(0.2)
+        expect("mic stop ends capture", b"mic stop\n",
+               ["OK mic=stopped running=0"])
+        stopped = mic_status("microphone returns to idle", "idle")
+        frozen_frames = int(stopped.group(9))
+        time.sleep(0.4)
+        after_wait = mic_status("stopped microphone does not keep reading",
+                                "idle")
+        check("frame counter is frozen after stop",
+              int(after_wait.group(9)), frozen_frames)
+        check("stopped microphone keeps its last window",
+              int(mic_level("level after stop keeps the window", "idle",
+                            "idle").group(3)) > 0, True)
+        check("microphone errors stay at zero",
+              (after_wait.group(14), after_wait.group(15)), ("0", "0"))
 
         # --- experiment 002 regression ------------------------------------
         expect("red with LF", b"red\n", ["OK state=red pin=48"])
@@ -1654,7 +1769,7 @@ def main():
         if port.is_open:
             # Terminate any partial/invalid line, then leave a safe, visible state:
             # audio silent, both servo outputs off, RGB off, normal eye screen.
-            port.write(b"\naudio stop\nservo both stop\noff\neyes normal\n")
+            port.write(b"\naudio stop\nmic stop\nservo both stop\noff\neyes normal\n")
             port.flush()
             collect(0.4)
             port.close()
