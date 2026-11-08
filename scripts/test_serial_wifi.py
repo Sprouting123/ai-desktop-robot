@@ -23,6 +23,7 @@ import pathlib
 import re
 import socket
 import time
+import zlib
 
 import serial
 from serial.tools import list_ports
@@ -40,7 +41,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "mood happy | mood sad | mood angry | mood normal | mood status | "
         "mood stop | wifi status | wifi reconnect | web status | audio beep | "
         "audio hello | audio stop | audio status | mic status | mic start | "
-        "mic level | mic stop; max_line=32; endings=LF/CR/CRLF")
+        "mic level | mic stop | mic record | mic dump; max_line=32; "
+        "endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -102,7 +104,17 @@ MIC_RE = re.compile(
     r"MIC state=(idle|running|error) ready=([01]) port=(\d+) bclk=(\d+) "
     r"ws=(\d+) din=(\d+) sample_rate_hz=(\d+) bits_per_sample=32 "
     r"bits_per_slot=(\d+) channel=right frames=(\d+) blocks=(\d+) reads=(\d+) "
-    r"timeouts=(\d+) zero_blocks=(\d+) errors=(\d+) last_error=(-?\d+)")
+    r"timeouts=(\d+) zero_blocks=(\d+) errors=(\d+) last_error=(-?\d+) "
+    r"record=(idle|recording|ready) record_frames=(\d+) record_bytes=(\d+) "
+    r"record_crc=0x([0-9a-f]{8})")
+MIC_RECORD_DONE_RE = re.compile(
+    r"MIC_RECORD_DONE frames=48000 bytes=96000 sample_rate_hz=16000 "
+    r"sample_format=s16le channels=1 crc32=([0-9a-f]{8})")
+PCM_BEGIN_RE = re.compile(
+    r"PCM_BEGIN bytes=96000 frames=48000 sample_rate_hz=16000 format=s16le "
+    r"channels=1 crc32=([0-9a-f]{8}) line_bytes=(\d+)")
+PCM_END_RE = re.compile(r"PCM_END lines=(\d+) bytes=96000 crc32=([0-9a-f]{8})")
+PCM_LINE_RE = re.compile(r"PCM ([0-9a-f]{6}) ([0-9a-f]+)")
 MIC_LEVEL_RE = re.compile(
     r"MIC_LEVEL state=(idle|running|error) signal=(idle|no_data|zero|ok) "
     r"window_frames=(\d+) window_blocks=(\d+) peak=(\d+) rms=(\d+) "
@@ -112,12 +124,14 @@ MIC_CONFIG = ("MIC_CONFIG installed=0 port=1 bclk=16 ws=17 din=18 "
               "dma=4 x 256 frames")
 MIC_INIT = ("MIC_INIT ready=1 port=1 bclk=16 ws=17 din=18 rate_hz=16000 "
             "bits_per_slot=32 channel=right")
+MIC_RECORD_ALLOC = "MIC_RECORD_ALLOC bytes=96000 psram=1"
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
 # serial command window and are not a response to that command.
 ASYNC_PREFIXES = ("WIFI_CONNECTING ", "WIFI_TIMEOUT ", "WIFI_RETRY ",
                   "WIFI_LOST ", "WIFI_CONNECTED ", "WIFI_RECONNECT ",
-                  "WIFI_DISABLED ", "WEB_LISTEN ", "WEB_AUTH ")
+                  "WIFI_DISABLED ", "WEB_LISTEN ", "WEB_AUTH ",
+                  "WEB_REJECT ")
 
 
 def load_token(path):
@@ -175,6 +189,16 @@ def main():
         port.flush()
         return [line for line in collect(seconds).splitlines()
                 if line and not line.startswith(ASYNC_PREFIXES)]
+
+    def collect_until(marker, timeout):
+        """Read until a line starts with marker, or the timeout expires."""
+        deadline = time.monotonic() + timeout
+        data = bytearray()
+        while time.monotonic() < deadline:
+            data.extend(port.read(port.in_waiting or 1))
+            if marker.encode() in data:
+                break
+        return data.decode("utf-8", errors="replace")
 
     def check(name, actual, expected):
         nonlocal passed
@@ -597,13 +621,16 @@ def main():
               (mic_boot.group(7), mic_boot.group(8)), ("16000", "32"))
         check("boot captured no microphone frames",
               (mic_boot.group(9), mic_boot.group(11)), ("0", "0"))
+        check("boot has no recording",
+              (mic_boot.group(16), mic_boot.group(17), mic_boot.group(18),
+               mic_boot.group(19)), ("idle", "0", "0", "00000000"))
         boot_level = mic_level("boot level has no data", "idle", "idle")
         check("boot level window is empty",
               (boot_level.group(3), boot_level.group(5), boot_level.group(6)),
               ("0", "0", "0"))
         expect("mic needs a subcommand", b"mic\n",
                ["ERR mic_usage; use help"])
-        expect("mic rejects unknown subcommands", b"mic record\n",
+        expect("mic rejects unknown subcommands", b"mic save\n",
                ["ERR mic_usage; use help"])
         expect("mic start rejects extra arguments", b"mic start now\n",
                ["ERR mic_usage; use help"])
@@ -663,6 +690,76 @@ def main():
                             "idle").group(3)) > 0, True)
         check("microphone errors stay at zero",
               (after_wait.group(14), after_wait.group(15)), ("0", "0"))
+
+        # --- experiment 010 phase 2: record, dump and checksum ------------
+        expect("mic dump needs a recording", b"mic dump\n",
+               ["ERR mic_no_recording"])
+        expect("mic record starts a fixed 3 second capture", b"mic record\n",
+               [MIC_RECORD_ALLOC,
+                "OK mic=recording frames=48000 duration_ms=3000"], 0.08)
+        recording = mic_status("recording is reported", "running")
+        check("record state while capturing", recording.group(16), "recording")
+        expect("mic start is refused while recording", b"mic start\n",
+               ["ERR mic_recording"])
+        expect("mic record is refused while recording", b"mic record\n",
+               ["ERR mic_recording"])
+        expect("mic dump is refused while recording", b"mic dump\n",
+               ["ERR mic_recording"])
+        done_text = collect_until("MIC_RECORD_DONE", 6.0)
+        done_lines = [line for line in done_text.splitlines()
+                      if line.startswith("MIC_RECORD_DONE")]
+        done = (MIC_RECORD_DONE_RE.fullmatch(done_lines[0])
+                if len(done_lines) == 1 else None)
+        check("recording finishes with the expected size", done is not None, True)
+        recorded = mic_status("completed recording is ready", "idle")
+        check("record state after capture", recorded.group(16), "ready")
+        check("recorded frame count", recorded.group(17), "48000")
+        check("recorded byte count", recorded.group(18), "96000")
+        check("recorded checksum matches the completion log",
+              recorded.group(19), done.group(1))
+        expect("mic stop keeps a completed recording", b"mic stop\n",
+               ["OK mic=stopped running=0"])
+        kept = mic_status("completed recording survives mic stop", "idle")
+        check("record stays ready after mic stop", kept.group(16), "ready")
+
+        port.write(b"mic dump\n")
+        port.flush()
+        dump_text = collect_until("PCM_END", 45.0)
+        dump_lines = dump_text.splitlines()
+        begin = next((PCM_BEGIN_RE.fullmatch(line) for line in dump_lines
+                      if line.startswith("PCM_BEGIN")), None)
+        check("dump header describes the clip", begin is not None, True)
+        check("dump header carries the recorded checksum",
+              begin.group(1), recorded.group(19))
+        rows = []
+        for line in dump_lines:
+            match = PCM_LINE_RE.fullmatch(line)
+            if match:
+                rows.append((int(match.group(1), 16),
+                             bytes.fromhex(match.group(2))))
+        check("dump row count", len(rows), 2000)
+        check("dump rows are contiguous", [o for o, _ in rows],
+              list(range(0, 96000, 48)))
+        payload = b"".join(data for _, data in rows)
+        check("dump payload size", len(payload), 96000)
+        check("dump checksum matches the firmware",
+              f"{zlib.crc32(payload) & 0xffffffff:08x}", recorded.group(19))
+        end = next((PCM_END_RE.fullmatch(line) for line in dump_lines
+                    if line.startswith("PCM_END")), None)
+        check("dump end marker closes the transfer", end is not None, True)
+        check("dump end reports the row count", end.group(1), "2000")
+        check("dump end repeats the checksum", end.group(2), recorded.group(19))
+
+        expect("mic record for the abort check", b"mic record\n",
+               ["OK mic=recording frames=48000 duration_ms=3000"], 0.08)
+        time.sleep(0.3)
+        expect("mic stop aborts a recording", b"mic stop\n",
+               ["OK mic=stopped running=0"])
+        aborted = mic_status("aborted recording is discarded", "idle")
+        check("record state after abort", aborted.group(16), "idle")
+        check("aborted recording has no frames", aborted.group(17), "0")
+        expect("mic dump after abort", b"mic dump\n",
+               ["ERR mic_no_recording"])
 
         # --- experiment 002 regression ------------------------------------
         expect("red with LF", b"red\n", ["OK state=red pin=48"])

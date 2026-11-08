@@ -22,6 +22,11 @@ struct Config {
 
 constexpr uint16_t kBlockFrames = 256;  // 16 ms at 16 kHz; one non-blocking read.
 constexpr uint8_t kWindowBlocks = 32;   // About 0.5 s of recent statistics.
+constexpr uint32_t kSettleFrames = 8000;   // 0.5 s discarded after i2s_start.
+constexpr uint32_t kRecordFrames = 48000;  // Exactly 3.0 s at 16 kHz.
+constexpr uint32_t kRecordBytes = kRecordFrames * sizeof(int16_t);
+
+enum class RecordState : uint8_t { kIdle, kRecording, kReady };
 // GPIO16/17/18 do not overlap the OLED (8/9), servos (4/5), MAX98357A (6/7/15)
 // or RGB (48). Port 1 keeps the speaker's I2S_NUM_0 path untouched.
 constexpr Config kDefaultConfig = {
@@ -51,10 +56,18 @@ class Engine {
   // driver cannot be installed; capture state is then reported as error.
   bool start();
   // Stops the I2S peripheral but keeps the driver installed for a fast restart.
+  // A recording in progress is discarded; a completed recording is kept.
   void stop();
   // Reads at most one DMA block per call with a zero timeout. Never waits.
   void update();
   void end();
+
+  // Captures exactly kRecordFrames into a PSRAM (or internal heap) buffer.
+  // Fails when a recording or dump is already active, or memory is unavailable.
+  bool startRecording();
+  // Begins a non-blocking serial dump of the last completed recording.
+  bool startDump();
+  bool dumpActive() const { return dumpActive_; }
 
   void printStatus() const;
   void printLevel() const;
@@ -64,6 +77,10 @@ class Engine {
   const char* state() const;
   uint32_t totalFrames() const { return totalFrames_; }
   uint32_t errors() const { return errors_; }
+  RecordState recordState() const { return recordState_; }
+  uint32_t recordedFrames() const { return recordFrames_; }
+  uint32_t recordedBytes() const { return recordFrames_ * sizeof(int16_t); }
+  uint32_t recordedCrc32() const { return recordCrc_; }
 
  private:
   bool install();
@@ -71,7 +88,11 @@ class Engine {
   void resetCapture();
   void pushBlock(uint32_t frames, uint32_t peak, uint64_t sumSquares,
                  bool allZero);
+  void finishRecording();
+  void emitDumpLine();
   const char* signalName() const;
+  const char* recordName() const;
+  static uint32_t crc32(const uint8_t* data, size_t length);
 
   struct BlockStat {
     uint32_t frames;
@@ -82,6 +103,14 @@ class Engine {
 
   Config config_;
   int32_t words_[kBlockFrames] = {};  // One 32-bit RX slot per element.
+  int16_t* recordBuffer_ = nullptr;   // kRecordBytes, PSRAM preferred.
+  uint32_t recordFrames_ = 0;
+  uint32_t settleFrames_ = 0;  // Startup samples still to discard.
+  uint32_t recordCrc_ = 0;
+  RecordState recordState_ = RecordState::kIdle;
+  bool dumpActive_ = false;
+  uint32_t dumpOffset_ = 0;
+  uint32_t dumpLines_ = 0;
   BlockStat window_[kWindowBlocks] = {};
   uint8_t windowHead_ = 0;
   uint8_t windowCount_ = 0;

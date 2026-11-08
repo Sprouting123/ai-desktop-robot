@@ -111,7 +111,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic stop; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic stop | mic record | mic dump; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -544,6 +544,14 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "start") == 0) {
+    if (microphoneEngine.dumpActive()) {
+      Serial.println("ERR mic_dump_busy");
+      return;
+    }
+    if (microphoneEngine.recordState() == mic::RecordState::kRecording) {
+      Serial.println("ERR mic_recording");
+      return;
+    }
     const bool wasRunning = microphoneEngine.running();
     if (!microphoneEngine.start()) {
       Serial.println("ERR mic_not_ready");
@@ -556,6 +564,40 @@ void executeMic(char* args) {
   if (std::strcmp(args, "stop") == 0) {
     microphoneEngine.stop();
     Serial.println("OK mic=stopped running=0");
+    return;
+  }
+  if (std::strcmp(args, "record") == 0) {
+    if (microphoneEngine.dumpActive()) {
+      Serial.println("ERR mic_dump_busy");
+      return;
+    }
+    if (microphoneEngine.recordState() == mic::RecordState::kRecording) {
+      Serial.println("ERR mic_recording");
+      return;
+    }
+    if (!microphoneEngine.startRecording()) {
+      Serial.println("ERR mic_record_failed");
+      return;
+    }
+    Serial.printf("OK mic=recording frames=%lu duration_ms=%lu\n",
+                  static_cast<unsigned long>(mic::kRecordFrames),
+                  static_cast<unsigned long>(mic::kRecordFrames * 1000UL /
+                                             mic::kDefaultConfig.sampleRate));
+    return;
+  }
+  if (std::strcmp(args, "dump") == 0) {
+    if (microphoneEngine.dumpActive()) {
+      Serial.println("ERR mic_dump_busy");
+      return;
+    }
+    if (microphoneEngine.recordState() == mic::RecordState::kRecording) {
+      Serial.println("ERR mic_recording");
+      return;
+    }
+    if (!microphoneEngine.startDump()) {
+      Serial.println("ERR mic_no_recording");
+      return;
+    }
     return;
   }
   Serial.println("ERR mic_usage; use help");

@@ -18,6 +18,7 @@
 - **实验 009 第一阶段已验收（2026-11-08 用户确认首次发声）：** 新增独立 `src/audio_engine.h/.cpp`，用 ESP-IDF legacy I²S TX 驱动（GPIO7 BCLK / GPIO15 LRC / GPIO6 DIN）驱动 MAX98357A；16kHz、16bit、立体声同行样本、4×240 帧 DMA、880Hz/300ms、15% 幅度、5ms 淡入淡出；`i2s_write(...,0)` 非阻塞，上电只初始化不发声。新增 `audio beep|stop|status`。排查发现开发板 `5Vin` 是输入引脚、不能给功放供电（实测约 2V）；改由与舵机共用的外部 5V 给 VIN/SD 供电并共地后，用户发送 `audio beep` 确认听到提示音。见[实验 009](experiments/009-audio-output.md)。
 - **实验 009 第二阶段：已验收（2026-11-08 用户试听成功）。** 用 Edge TTS（免费、非官方 Microsoft 接口）在本机生成“你好，我是你的 AI 桌宠！”，声音 `zh-CN-XiaoxiaoNeural`、语速 −5%，转成 16kHz/16bit/单声道裸 PCM（78,828 字节、2.463s），经 `board_build.embed_files` 只读链接进 flash；新增 `Source`/`ToneSource`/`FlashClipSource` 与 `audio hello`，每次只 `memcpy_P` 读取 240 帧，不整段复制到 RAM；修正 `i2s_write` 部分写入时按 `int16_t*` 偏移的字节指针错误，并新增自然结束 drain（约 80ms）避免尾音被 DMA 清零截断。三环境构建通过（Flash 914,909 字节、静态 RAM 52,328 字节），烧录校验通过，完整回归 **1103 项通过**（外部 5V 断开）。未产生付费 API 调用；上电不自动播放。2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功，记为已验收（证据为用户观察，未逐项说明句尾、爆音与音量，未做定量测量）。
 - **实验 010 第一阶段：已验收（2026-11-08 用户讲话观察）。** 新增 `src/microphone_engine.h/.cpp`：INMP441 使用 `I2S_NUM_1` RX、SCK GPIO16 / WS GPIO17 / SD GPIO18、16kHz/32bit 槽、4×256 帧 DMA；上电不安装驱动、不采集，`mic start` 才初始化，`mic stop` 用 `i2s_stop()` 停止；`mic status`/`mic level` 输出近期 0.5s 窗口峰值、RMS、采样计数与 `signal=ok|zero|no_data|idle`。三环境构建通过（`rgb_gpio48` Flash 918,361 字节、静态 RAM 54,204 字节），烧录校验通过，含麦克风检查的完整回归左声道版本 **1152 项**、右声道版本 **1151 项**通过（Wi-Fi 已连接含 HTTP，外部 5V 断开；计数差 1 来自舵机轮询时机，非失败项）。实测左声道全零、右声道有正常数据；用户核对并确认接线正确后，固件改为 `I2S_CHANNEL_FMT_ONLY_RIGHT` 并重新烧录，回归中 `signal=ok`（peak≈1,342,808、rms≈1,010,716）。用户随后在串口监视器实测：安静时 peak 163,042（1%）、说话时 526,968–536,016（6%），`mic stop` 后帧计数冻结在 7,370,496；第一阶段记为已验收（证据为用户提供的读数，未做定量测量），见[实验 010](experiments/010-microphone.md)。
+- **实验 010 第二阶段：已验收（2026-11-08 用户试听）。** 新增 `mic record`/`mic dump`：固定 3.000 秒（48,000 帧、96,000 字节）16kHz/16bit/单声道录音，缓冲优先 PSRAM、复位后丢失；每次开始采集先丢弃 8,000 帧启动瞬态；录满后计算 CRC-32（与 Python `zlib.crc32` 一致）、停止 RX 并进入 `record=ready`；`mic dump` 按每行 48 字节、共 2,000 行非阻塞输出，带偏移、长度与 CRC 校验。新增 `scripts/capture_mic_wav.py`：核对设备、倒计时、录音、传输、逐行/长度/CRC 校验，30Hz 去直流后做峰值归一化并写入 `work/mic-*.wav`。三环境构建通过（`rgb_gpio48` Flash 920,009 字节、静态 RAM 54,236 字节），烧录 920,368 字节且 `Hash of data verified`，完整回归 **1187 项通过**（Wi-Fi 含 HTTP，外部 5V 断开）。最终样本 `work/mic-20261108-181323.wav`（CRC `ac9af219`，原始峰值 6,844、去直流后 4,825/14.7%、增益 ×4.75）有效语音约 0.62–1.25 秒，用户试听后确认“能听清说话内容”，第二阶段记为已验收（证据为用户听感，未做定量测量；WAV、诊断脚本与日志在本机 `work/`，未入库）。见[实验 010](experiments/010-microphone.md) 第 7、8 节。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。实验 009 第二阶段的实现、测试、文档与语音资源提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 于 2026-11-08 推送，`git ls-remote` 核对远程与本地一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
@@ -47,7 +48,7 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 006：动作序列与表情联动（第二阶段） | 已验收 | 三环境构建、GPIO48 烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；2026-11-07 用户确认 `motion neutral/wiggle/together/alternate`、运动中 `motion stop`、`mood happy/sad/angry/normal` 和 `mood stop` 均正常；未做定量测量，见[实验 006](experiments/006-dual-servo.md) |
 | 实验 007：纸板机械原型 | 已验收 | 2026-11-08 用户报告安装后的两只舵机与 OLED 情绪联动正常；证据为用户观察，未归档照片/视频，结构尺寸、电流、供电稳定性、实际角度未测量，见[实验 007](experiments/007-cardboard-prototype.md) |
 | 实验 008：Wi-Fi 与局域网控制 | 已验收 | 三环境构建通过；凭据为空 910 项、不可达 SSID 903 项通过；2026-11-08 真实联网成功（IP 192.168.31.17、RSSI -40）且含 HTTP 的完整回归 1038 项通过；用户报告浏览器/手机页面与远程控制测试通过，证据为用户观察，见[实验 008](experiments/008-wifi-control.md) |
-| 实验 010：INMP441 麦克风采集 | 已验收（第一阶段） | 三环境构建、烧录与回归通过（左声道 1152 项、右声道 1151 项）；`I2S_NUM_1` RX、GPIO16/17/18、16kHz/32bit 槽、非阻塞 DMA、`mic status/start/level/stop`；用户确认接线正确，实测数据只在右声道，固件改为右声道；2026-11-08 用户讲话观察：安静 peak 1% → 说话 peak 6%，`mic stop` 后计数冻结；未做定量测量，见[实验 010](experiments/010-microphone.md) |
+| 实验 010：INMP441 麦克风采集与录音 | 已验收（两阶段） | 第一阶段：三环境构建、烧录与回归通过（左声道 1152 项、右声道 1151 项）；`I2S_NUM_1` RX、GPIO16/17/18、16kHz/32bit 槽、非阻塞 DMA、`mic status/start/level/stop`；实测数据只在右声道，固件改为右声道；用户讲话观察安静 peak 1% → 说话 peak 6%。第二阶段：`mic record`/`mic dump` 固定 3 秒录音、CRC-32 校验传输与 `capture_mic_wav.py` WAV 导出；三环境构建、烧录哈希校验、1187 项回归通过（外部 5V 断开）；2026-11-08 用户试听最终 WAV 确认能听清说话内容。未做定量音频测量，见[实验 010](experiments/010-microphone.md) |
 | 实验 009：MAX98357A I²S 音频 | 已验收 | 第一阶段：2026-11-08 用户确认听到提示音，完整回归 1075 项通过。第二阶段：内嵌 Edge TTS 中文语音与 `audio hello`，三环境构建、烧录与 1103 项完整回归通过（外部 5V 断开），用户接通外部 5V 后报告试听成功；音质与供电余量未测量，见[实验 009](experiments/009-audio-output.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
@@ -200,6 +201,23 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - 验证：三环境构建通过，`rgb_gpio48` Flash 914,909 字节（14.0%）、静态 RAM 52,328 字节（16.0%），烧录与哈希校验通过；启动新增 `AUDIO_CLIP name=hello_zh bytes=78828 frames=39414 sample_rate_hz=16000 volume_pct=60`；完整回归 **1103 项通过**（Wi-Fi 已连接含 HTTP，外部 5V 断开），覆盖 hello 启动/重启/停止/自然播完、播放期间 OLED 与动作响应、`errors=0` 与堆检查。回归不能证明可听声音。
 - 听音：2026-11-08 用户接通外部 5V（未同时驱动舵机）后发送 `audio hello`，报告**试听成功**，实验 009 第二阶段记为已验收（证据为用户观察）。句尾完整性、爆音与音量未逐项说明，声压、电流与供电余量未测量；`i2s_write` 部分写入路径未被脚本强制触发，属代码级修正。
 
+## 实验 010 的验证摘要
+
+第一阶段（采集）：
+
+- 新增 `src/microphone_engine.*`：`I2S_NUM_1` RX、GPIO16/17/18、16kHz/32bit 槽、4×256 帧 DMA、`i2s_read(...,0)` 非阻塞；按需安装驱动，`mic start/stop/level/status`。
+- 实测该 INMP441 数据只在右声道槽，固件改为 `I2S_CHANNEL_FMT_ONLY_RIGHT` + `I2S_CHANNEL_MONO`；左声道版本回归 1152 项、右声道版本 1151 项通过。
+- 2026-11-08 用户讲话观察：安静 peak 1%（163,042）→ 说话 peak 6%（526,968–536,016），`mic stop` 后 `frames` 冻结在 7,370,496；证据为用户读数，未做定量测量。
+
+第二阶段（3 秒录音与 WAV）：
+
+- 固件：`mic record` 首次分配 96,000 字节（优先 PSRAM，失败退回内部堆），丢弃 8,000 帧（0.5 秒）启动瞬态后录 48,000 帧；完成后 CRC-32、`i2s_stop()`、`record=ready`。`mic dump` 每行 48 字节、2,000 行，带偏移/长度/CRC，`Serial.availableForWrite()` 不足时下一轮再发。录音中 `mic start/record/dump` 返回 `ERR mic_recording`，dump 中返回 `ERR mic_dump_busy`，录音中 `mic stop` 丢弃本次录音。
+- 主机：`scripts/capture_mic_wav.py` 核对设备身份，默认 5 秒倒计时（提示数到 3 开始说话），等待 `MIC_RECORD_DONE` 后 dump，校验 2,000 行偏移、96,000 字节与 `zlib.crc32`，30Hz 一阶高通去直流，峰值归一化到 70% 满量程（增益上限 64×），写 16kHz/16bit/单声道 WAV 到 `work/`。
+- 诊断：复位后立即录音的前约 0.4–0.5 秒为满幅衰减伪影，预启动 2 秒后消失，因此加入 settle 丢弃；原始波形有数个百分点满量程的直流偏置与慢漂移，主机 30Hz 高通去除；1kHz 声音测试在 1000Hz 处出现幅度约 816 的峰值（相邻频点 2–5）；`mic level` 安静峰值 4–5%，5–10cm 大声说话依次出现 53%/24%/14%/12%。此前“只有噪声”的样本经实时电平对比，判断与说话太轻、太远或起录太晚有关。
+- 构建与烧录：`diagnostics` Flash 916,641 字节 / RAM 54,188 字节；`rgb_gpio48` 与 `rgb_gpio38` Flash 920,009 字节 / RAM 54,236 字节。烧录 920,368 字节，`Hash of data verified`。
+- 回归：外部 5V 断开、Wi-Fi 已连接，`scripts/test_serial_wifi.py` **1187 项通过**（含 HTTP、录音状态、传输与 CRC 检查），无复位。日志在本机 `work/regression-010-phase2d.log`，被 Git 忽略。
+- 试听：`work/mic-20261108-181323.wav`，3.000 秒，固件 CRC `ac9af219`，原始峰值 6,844，去直流后 4,825（14.7%），增益 ×4.75；有效语音约 0.62–1.25 秒。用户确认“能听清说话内容”，第二阶段记为已验收（证据为用户听感；灵敏度、噪声底、频响、失真与声压级未测量；WAV 与诊断资料未入库）。
+
 ## 未决事项与已解决问题
 
 | 事项 | 状态 / 影响 | 后续处理 |
@@ -235,12 +253,16 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 009 第二阶段听音 | 已验收（用户观察） | 2026-11-08 用户接通外部 5V 后发送 `audio hello`，报告试听成功；未逐项说明句尾完整性、爆音与音量，未做定量测量 |
 | 实验 009 第二阶段音频资源 | 已入库（用户授权） | `assets/audio/hello_zh.raw` 由 Edge TTS 生成并随本阶段提交；Edge TTS 为非官方接口，资源仅用于本项目实验，公开再分发前需用户确认或改用许可明确的 TTS |
 | 实验 009 第二阶段 Git 同步 | 已完成 | 实现、测试、文档与语音资源提交 [498d4f8](https://github.com/Sprouting123/ai-desktop-robot/commit/498d4f8af6cf453eaa65ea5e618ffe462f4aaca5) 已推送至 `origin/main`；`git ls-remote` 核对远程与本地一致 |
+| 实验 010 第二阶段试听 | 已验收（用户观察） | 2026-11-08 用户试听 `work/mic-20261108-181323.wav` 后确认能听清说话内容；有效语音约 0.6 秒，未做定量测量 |
+| 实验 010 音频定量指标 | 未测量 | 灵敏度、噪声底、频响、失真、声压级、3V3 供电余量与长时间稳定性均无数据；录音中的爆音与削波未评估 |
+| 实验 010 录音文件归档 | 未入库 | WAV、`work/` 下的诊断脚本与回归日志只在本机并被 Git 忽略；是否入库或分发需用户明确同意 |
+| 实验 010 第二阶段 Git 同步 | 待用户确认 | 固件、测试脚本、WAV 导出脚本与文档改动尚未提交；按项目规则提交/推送前征求用户确认 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：实验 010 第二阶段（待用户确认后开始）。** 第一阶段已于 2026-11-08 通过实物验收：安静 peak 1%、说话 peak 6%，`mic stop` 后计数冻结。第二阶段计划：在 RAM/PSRAM 中录制约 3 秒 16kHz/16bit 单声道音频，通过串口可靠传输并做完整性校验，在 Ubuntu 生成 WAV 试听；不接入在线识别、云端 AI 或付费 API。开始前需再次确认外部 5V 断开（麦克风只用 3V3），并复核第二阶段的内存与传输边界。烧录和自动测试期间出现异常发热、电压下跌或 ESP32 重启时立即断电检查。
+**当前下一步：等待用户确认是否提交并推送实验 010 第二阶段的固件、测试脚本、WAV 导出脚本与文档。** 第二阶段已于 2026-11-08 通过三环境构建、烧录哈希校验、1187 项回归和用户试听验收；样本 WAV、诊断脚本与回归日志只在本机 `work/`，未入库。提交前需再次核对 `git status` 与差异，只暂存本次相关文件；推送后核对远程一致。之后是否进入语音识别、录音回放或更长录音，由用户决定，并需先明确本地/云端方案、隐私边界与失败处理；任何付费 API 调用需用户事先明确授权。
 
 实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
@@ -282,6 +304,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-08 | 实验 010 第一阶段软件验证：烧录校验通过，含麦克风检查的完整回归 1152 项通过（Wi-Fi 含 HTTP，外部 5V 断开）；实测左声道全零、右声道有正常数据 | [实验 010](experiments/010-microphone.md) 6.3、6.4；诊断构建未保留 |
 | 2026-11-08 | 用户核对并确认 INMP441 接线正确，左声道仍全零（`total_frames=301056`、`peak=0`）；按实测把固件改为 `I2S_CHANNEL_FMT_ONLY_RIGHT`，日志与测试同步为 `channel=right`，三环境构建、烧录与 1151 项回归通过；回归中 `signal=ok`、`peak≈1,342,808`、`rms≈1,010,716` | [实验 010](experiments/010-microphone.md) 6.3 |
 | 2026-11-08 | 实验 010 第一阶段实物验收：用户讲话观察安静 peak 163,042（1%）→ 说话 526,968–536,016（6%），`signal=ok`、`zero_blocks=0`、`errors=0`，`mic stop` 后 `frames` 冻结在 7,370,496；第一阶段记为已验收（未做定量测量） | [实验 010](experiments/010-microphone.md) 6.4；证据为用户提供的串口读数与操作观察 |
+| 2026-11-08 | 实验 010 第二阶段实现：新增 `mic record`/`mic dump`，3.000 秒 PSRAM 录音、8,000 帧启动瞬态丢弃、CRC-32 校验、2,000 行非阻塞传输；新增 `scripts/capture_mic_wav.py`（设备核对、30Hz 去直流、峰值归一化、WAV 输出）与回归检查；三环境构建通过 | [实验 010](experiments/010-microphone.md) 第 7 节；样本与本机日志在 `work/`，被 Git 忽略 |
+| 2026-11-08 | 实验 010 第二阶段验收证据：烧录 920,368 字节且哈希校验通过，完整回归 1187 项通过（Wi-Fi 含 HTTP、外部 5V 断开）；诊断确认启动瞬态与直流偏置并修正；用户试听 `mic-20261108-181323.wav`（CRC `ac9af219`）确认能听清说话内容，第二阶段记为已验收 | [实验 010](experiments/010-microphone.md) 第 8 节；证据为用户听感，未做定量音频测量 |
 
 ## 维护方法
 

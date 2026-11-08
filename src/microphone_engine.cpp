@@ -1,6 +1,9 @@
 #include "microphone_engine.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <esp_heap_caps.h>
 
 namespace mic {
 namespace {
@@ -9,6 +12,8 @@ namespace {
 // value without any floating-point conversion.
 constexpr int32_t kFullScale = 8388608;  // 2^23
 constexpr uint32_t kIdleReportMs = 0;    // Read timeout 0: never wait for data.
+constexpr uint32_t kDumpBytesPerLine = 48;  // 96 hex characters per line.
+constexpr size_t kDumpLineBytes = 4 + 8 + 1 + 2 * kDumpBytesPerLine + 2;
 
 uint32_t percentOfFullScale(uint32_t value) {
   if (value >= static_cast<uint32_t>(kFullScale)) return 100;
@@ -98,9 +103,19 @@ void Engine::uninstall() {
 
 void Engine::end() {
   if (installed_) uninstall();
+  if (recordBuffer_ != nullptr) {
+    free(recordBuffer_);
+    recordBuffer_ = nullptr;
+  }
+  recordState_ = RecordState::kIdle;
+  recordFrames_ = 0;
+  settleFrames_ = 0;
+  recordCrc_ = 0;
+  dumpActive_ = false;
 }
 
 bool Engine::start() {
+  if (recordState_ == RecordState::kRecording) return false;
   if (!installed_ && !install()) return false;
   if (!running_) {
     // The driver starts RX when installed; i2s_start is only needed after a
@@ -122,6 +137,14 @@ bool Engine::start() {
 void Engine::stop() {
   if (running_ && installed_) i2s_stop(config_.port);
   running_ = false;
+  if (recordState_ == RecordState::kRecording) {
+    // An interrupted recording is discarded; the previous ready clip was
+    // already invalidated when the new recording started.
+    recordState_ = RecordState::kIdle;
+    recordFrames_ = 0;
+    settleFrames_ = 0;
+    recordCrc_ = 0;
+  }
 }
 
 void Engine::resetCapture() {
@@ -139,6 +162,9 @@ void Engine::resetCapture() {
 }
 
 void Engine::update() {
+  // The dump advances even when the microphone is not capturing: a completed
+  // recording stops RX, but its bytes still need to reach the host.
+  if (dumpActive_) emitDumpLine();
   if (!running_ || !installed_) return;
 
   size_t bytesRead = 0;
@@ -177,6 +203,127 @@ void Engine::update() {
   totalFrames_ += static_cast<uint32_t>(frames);
   if (allZero) ++zeroBlocks_;
   pushBlock(static_cast<uint32_t>(frames), peak, sumSquares, allZero);
+
+  if (recordState_ == RecordState::kRecording) {
+    // Starting I2S produces a saturated settling transient in this specimen.
+    // Discard the first kSettleFrames so the saved clip starts at steady state.
+    size_t offset = 0;
+    if (settleFrames_ > 0) {
+      const uint32_t skip = frames < settleFrames_ ? frames : settleFrames_;
+      settleFrames_ -= skip;
+      offset = skip;
+    }
+    const uint32_t usable = static_cast<uint32_t>(frames - offset);
+    if (usable == 0) return;
+    const uint32_t remaining = kRecordFrames - recordFrames_;
+    const size_t take = usable < remaining ? usable : remaining;
+    for (size_t i = 0; i < take; ++i) {
+      // Second shift turns the 24-bit sample into 16-bit PCM for the WAV.
+      recordBuffer_[recordFrames_ + i] =
+          static_cast<int16_t>(words_[offset + i] >> 16);
+    }
+    recordFrames_ += static_cast<uint32_t>(take);
+    if (recordFrames_ >= kRecordFrames) finishRecording();
+  }
+}
+
+bool Engine::startRecording() {
+  if (dumpActive_ || recordState_ == RecordState::kRecording) return false;
+  if (recordBuffer_ == nullptr) {
+    bool psram = true;
+    recordBuffer_ = static_cast<int16_t*>(
+        heap_caps_malloc(kRecordBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (recordBuffer_ == nullptr) {
+      psram = false;
+      recordBuffer_ = static_cast<int16_t*>(malloc(kRecordBytes));
+    }
+    if (recordBuffer_ == nullptr) return false;
+    Serial.printf("MIC_RECORD_ALLOC bytes=%lu psram=%u\n",
+                  static_cast<unsigned long>(kRecordBytes), psram ? 1U : 0U);
+  }
+  if (!start()) return false;
+  recordFrames_ = 0;
+  settleFrames_ = kSettleFrames;
+  recordCrc_ = 0;
+  recordState_ = RecordState::kRecording;
+  return true;
+}
+
+void Engine::finishRecording() {
+  recordCrc_ = crc32(reinterpret_cast<const uint8_t*>(recordBuffer_),
+                     recordedBytes());
+  if (installed_) i2s_stop(config_.port);
+  running_ = false;
+  recordState_ = RecordState::kReady;
+  Serial.printf(
+      "MIC_RECORD_DONE frames=%lu bytes=%lu sample_rate_hz=%lu "
+      "sample_format=s16le channels=1 crc32=%08lx\n",
+      static_cast<unsigned long>(recordFrames_),
+      static_cast<unsigned long>(recordedBytes()),
+      static_cast<unsigned long>(config_.sampleRate),
+      static_cast<unsigned long>(recordCrc_));
+}
+
+bool Engine::startDump() {
+  if (dumpActive_ || recordState_ != RecordState::kReady) return false;
+  dumpActive_ = true;
+  dumpOffset_ = 0;
+  dumpLines_ = 0;
+  Serial.printf(
+      "PCM_BEGIN bytes=%lu frames=%lu sample_rate_hz=%lu format=s16le "
+      "channels=1 crc32=%08lx line_bytes=%lu\n",
+      static_cast<unsigned long>(recordedBytes()),
+      static_cast<unsigned long>(recordFrames_),
+      static_cast<unsigned long>(config_.sampleRate),
+      static_cast<unsigned long>(recordCrc_),
+      static_cast<unsigned long>(kDumpBytesPerLine));
+  return true;
+}
+
+void Engine::emitDumpLine() {
+  const uint32_t total = recordedBytes();
+  char line[kDumpLineBytes];
+  int length = 0;
+  if (dumpOffset_ >= total) {
+    length = snprintf(line, sizeof(line), "PCM_END lines=%lu bytes=%lu "
+                     "crc32=%08lx\n",
+                     static_cast<unsigned long>(dumpLines_),
+                     static_cast<unsigned long>(total),
+                     static_cast<unsigned long>(recordCrc_));
+    if (length <= 0 || Serial.availableForWrite() < length) return;
+    Serial.write(reinterpret_cast<const uint8_t*>(line),
+                 static_cast<size_t>(length));
+    dumpActive_ = false;
+    return;
+  }
+
+  const uint32_t take =
+      total - dumpOffset_ < kDumpBytesPerLine ? total - dumpOffset_
+                                              : kDumpBytesPerLine;
+  const uint8_t* data = reinterpret_cast<const uint8_t*>(recordBuffer_);
+  length = snprintf(line, sizeof(line), "PCM %06lx ",
+                    static_cast<unsigned long>(dumpOffset_));
+  for (uint32_t i = 0; i < take; ++i) {
+    length += snprintf(line + length, sizeof(line) - static_cast<size_t>(length),
+                       "%02x", data[dumpOffset_ + i]);
+  }
+  line[length++] = '\n';
+  if (Serial.availableForWrite() < length) return;
+  Serial.write(reinterpret_cast<const uint8_t*>(line),
+               static_cast<size_t>(length));
+  dumpOffset_ += take;
+  ++dumpLines_;
+}
+
+uint32_t Engine::crc32(const uint8_t* data, size_t length) {
+  uint32_t crc = 0xFFFFFFFFu;
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+  }
+  return ~crc;
 }
 
 void Engine::pushBlock(uint32_t frames, uint32_t peak, uint64_t sumSquares,
@@ -227,12 +374,21 @@ const char* Engine::signalName() const {
   return "ok";
 }
 
+const char* Engine::recordName() const {
+  switch (recordState_) {
+    case RecordState::kRecording: return "recording";
+    case RecordState::kReady: return "ready";
+    default: return "idle";
+  }
+}
+
 void Engine::printStatus() const {
   Serial.printf(
       "MIC state=%s ready=%u port=%d bclk=%u ws=%u din=%u "
       "sample_rate_hz=%lu bits_per_sample=32 bits_per_slot=%u channel=right "
       "frames=%lu blocks=%lu reads=%lu timeouts=%lu zero_blocks=%lu "
-      "errors=%lu last_error=%ld\n",
+      "errors=%lu last_error=%ld record=%s record_frames=%lu "
+      "record_bytes=%lu record_crc=0x%08lx\n",
       state(), installed_ ? 1U : 0U, static_cast<int>(config_.port),
       config_.bclkPin, config_.wsPin, config_.dataPin,
       static_cast<unsigned long>(config_.sampleRate), config_.bitsPerSlot,
@@ -240,7 +396,10 @@ void Engine::printStatus() const {
       static_cast<unsigned long>(blocks_), static_cast<unsigned long>(reads_),
       static_cast<unsigned long>(timeouts_),
       static_cast<unsigned long>(zeroBlocks_),
-      static_cast<unsigned long>(errors_), static_cast<long>(lastErrorCode_));
+      static_cast<unsigned long>(errors_), static_cast<long>(lastErrorCode_),
+      recordName(), static_cast<unsigned long>(recordFrames_),
+      static_cast<unsigned long>(recordedBytes()),
+      static_cast<unsigned long>(recordCrc_));
 }
 
 void Engine::printLevel() const {
