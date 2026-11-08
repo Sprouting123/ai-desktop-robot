@@ -29,7 +29,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-BOOT = "[experiment 012] INMP441 10-second recording / Arduino"
+BOOT = "[experiment 013] Wi-Fi audio upload / Arduino"
 HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | "
         "oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|"
         "sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | "
@@ -41,7 +41,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "mood happy | mood sad | mood angry | mood normal | mood status | "
         "mood stop | wifi status | wifi reconnect | web status | audio beep | "
         "audio hello | audio stop | audio status | mic status | mic start | "
-        "mic level | mic stop | mic record | mic dump; max_line=32; "
+        "mic level | mic stop | mic record | mic dump | mic upload | "
+        "mic upload status | mic upload cancel; max_line=32; "
         "endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
@@ -119,6 +120,9 @@ MIC_LEVEL_RE = re.compile(
     r"MIC_LEVEL state=(idle|running|error) signal=(idle|no_data|zero|ok) "
     r"window_frames=(\d+) window_blocks=(\d+) peak=(\d+) rms=(\d+) "
     r"peak_pct=(\d+) rms_pct=(\d+) total_frames=(\d+) zero_blocks=(\d+)")
+UPLOAD_RE = re.compile(
+    r"UPLOAD state=(\w+) configured=([01]) bytes=(\d+) sent=(\d+) "
+    r"crc32=([0-9a-f]{8}) attempts=(\d+) host=([^ ]*) port=(\d+)")
 MIC_CONFIG = ("MIC_CONFIG installed=0 port=1 bclk=16 ws=17 din=18 "
               "sample_rate_hz=16000 bits_per_slot=32 channel=right "
               "dma=4 x 256 frames")
@@ -131,7 +135,7 @@ TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 ASYNC_PREFIXES = ("WIFI_CONNECTING ", "WIFI_TIMEOUT ", "WIFI_RETRY ",
                   "WIFI_LOST ", "WIFI_CONNECTED ", "WIFI_RECONNECT ",
                   "WIFI_DISABLED ", "WEB_LISTEN ", "WEB_AUTH ",
-                  "WEB_REJECT ")
+                  "WEB_REJECT ", "MIC_UPLOAD_", "ERR mic_upload_failed ")
 
 
 def load_token(path):
@@ -349,6 +353,16 @@ def main():
         lines = [line for line in send(b"mic status\n")
                  if line.startswith("MIC ")]
         match = MIC_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        print("  " + lines[0], flush=True)
+        return match
+
+    def upload_status(name, state=None):
+        lines = [line for line in send(b"mic upload status\n")
+                 if line.startswith("UPLOAD ")]
+        match = UPLOAD_RE.fullmatch(lines[0]) if len(lines) == 1 else None
         check(name, match is not None, True)
         if state is not None:
             check(f"{name} state", match.group(1), state)
@@ -698,6 +712,13 @@ def main():
               (after_wait.group(14), after_wait.group(15)), ("0", "0"))
 
         # --- experiment 010 phase 2: record, dump and checksum ------------
+        expect("mic upload needs a completed recording", b"mic upload\n",
+               ["ERR mic_no_recording"])
+        upload_status("upload is idle before a recording", "idle")
+        expect("mic upload cancel is safe while idle", b"mic upload cancel\n",
+               ["OK upload=idle"])
+        expect("mic upload rejects unknown subcommands", b"mic upload now\n",
+               ["ERR mic_usage; use help"])
         expect("mic dump needs a recording", b"mic dump\n",
                ["ERR mic_no_recording"])
         expect("mic record starts a fixed 10 second capture", b"mic record\n",
@@ -710,6 +731,8 @@ def main():
         expect("mic record is refused while recording", b"mic record\n",
                ["ERR mic_recording"])
         expect("mic dump is refused while recording", b"mic dump\n",
+               ["ERR mic_recording"])
+        expect("mic upload is refused while recording", b"mic upload\n",
                ["ERR mic_recording"])
         done_text = collect_until("MIC_RECORD_DONE", 16.0)
         done_lines = [line for line in done_text.splitlines()
@@ -727,6 +750,11 @@ def main():
                ["OK mic=stopped running=0"])
         kept = mic_status("completed recording survives mic stop", "idle")
         check("record stays ready after mic stop", kept.group(16), "ready")
+        upload_ready = upload_status("upload sees the completed clip", "idle")
+        check("upload reports the recorded byte count",
+              upload_ready.group(3), "320000")
+        check("upload reports the recorded checksum",
+              upload_ready.group(5), recorded.group(19))
 
         port.write(b"mic dump\n")
         port.flush()

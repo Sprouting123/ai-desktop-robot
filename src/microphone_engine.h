@@ -81,6 +81,15 @@ class Engine {
   uint32_t recordedFrames() const { return recordFrames_; }
   uint32_t recordedBytes() const { return recordFrames_ * sizeof(int16_t); }
   uint32_t recordedCrc32() const { return recordCrc_; }
+  uint32_t sampleRate() const { return config_.sampleRate; }
+  // Read-only view of the completed clip; null unless record=ready. The
+  // uploader reads it without copying while commands that would overwrite or
+  // dump it are rejected.
+  const uint8_t* recordedData() const {
+    return recordState_ == RecordState::kReady
+               ? reinterpret_cast<const uint8_t*>(recordBuffer_)
+               : nullptr;
+  }
 
  private:
   bool install();

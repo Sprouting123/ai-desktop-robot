@@ -15,3 +15,12 @@
 #define WIFI_SSID "your-2.4ghz-ssid"
 #define WIFI_PASSWORD "your-wifi-password"
 #define API_TOKEN "replace-with-a-32-character-random-hex-token"
+
+// Optional experiment 013 audio upload receiver on the trusted home LAN.
+// AUDIO_UPLOAD_HOST must be an IPv4 literal (no hostname lookup). Use a
+// separate token from API_TOKEN; generate it with `openssl rand -hex 16`.
+// Leave AUDIO_UPLOAD_HOST empty to disable `mic upload`.
+#define AUDIO_UPLOAD_HOST "192.168.1.10"
+#define AUDIO_UPLOAD_PORT 8080
+#define AUDIO_UPLOAD_PATH "/upload"
+#define AUDIO_UPLOAD_TOKEN "replace-with-a-different-32-character-random-hex-token"

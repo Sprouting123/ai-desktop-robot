@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "audio_engine.h"
+#include "audio_uploader.h"
 #include "voice_clips.h"
 #include "eyes_engine.h"
 #include "microphone_engine.h"
@@ -29,6 +30,20 @@
 #endif
 #ifndef API_TOKEN
 #define API_TOKEN ""
+#endif
+// Optional experiment 013 receiver. Empty values leave `mic upload` disabled;
+// the firmware still builds and every local function keeps working.
+#ifndef AUDIO_UPLOAD_HOST
+#define AUDIO_UPLOAD_HOST ""
+#endif
+#ifndef AUDIO_UPLOAD_PORT
+#define AUDIO_UPLOAD_PORT 0
+#endif
+#ifndef AUDIO_UPLOAD_PATH
+#define AUDIO_UPLOAD_PATH "/upload"
+#endif
+#ifndef AUDIO_UPLOAD_TOKEN
+#define AUDIO_UPLOAD_TOKEN ""
 #endif
 
 #ifndef RGB_LED_PIN
@@ -64,6 +79,9 @@ audio::Engine audioEngine;
 // The microphone owns I2S_NUM_1 in RX-only mode. It never installs a TX path
 // and does not share state with the speaker engine on I2S_NUM_0.
 mic::Engine microphoneEngine;
+// Uploads the completed PSRAM recording over Wi-Fi without copying it. It is
+// advanced one small step per loop and only starts on an explicit command.
+upload::Client audioUploader(microphoneEngine);
 // Networking only calls the same controllers as the serial commands. It does
 // not own a second copy of expression, motion or servo state.
 wifi::Manager wifiManager;
@@ -111,7 +129,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic stop | mic record | mic dump; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -544,6 +562,10 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "start") == 0) {
+    if (audioUploader.active()) {
+      Serial.println("ERR mic_upload_busy");
+      return;
+    }
     if (microphoneEngine.dumpActive()) {
       Serial.println("ERR mic_dump_busy");
       return;
@@ -562,11 +584,20 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "stop") == 0) {
+    if (audioUploader.active()) {
+      // Cancel the transfer but keep the completed recording for a retry.
+      audioUploader.cancel();
+      return;
+    }
     microphoneEngine.stop();
     Serial.println("OK mic=stopped running=0");
     return;
   }
   if (std::strcmp(args, "record") == 0) {
+    if (audioUploader.active()) {
+      Serial.println("ERR mic_upload_busy");
+      return;
+    }
     if (microphoneEngine.dumpActive()) {
       Serial.println("ERR mic_dump_busy");
       return;
@@ -586,6 +617,10 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "dump") == 0) {
+    if (audioUploader.active()) {
+      Serial.println("ERR mic_upload_busy");
+      return;
+    }
     if (microphoneEngine.dumpActive()) {
       Serial.println("ERR mic_dump_busy");
       return;
@@ -597,6 +632,55 @@ void executeMic(char* args) {
     if (!microphoneEngine.startDump()) {
       Serial.println("ERR mic_no_recording");
       return;
+    }
+    return;
+  }
+  if (std::strncmp(args, "upload", 6) == 0 &&
+      (args[6] == '\0' || args[6] == ' ' || args[6] == '\t')) {
+    char* sub = args + 6;
+    while (*sub == ' ' || *sub == '\t') ++sub;
+    if (*sub != '\0') {
+      if (std::strcmp(sub, "status") == 0) {
+        audioUploader.printStatus();
+        return;
+      }
+      if (std::strcmp(sub, "cancel") == 0) {
+        audioUploader.cancel();
+        return;
+      }
+      Serial.println("ERR mic_usage; use help");
+      return;
+    }
+    if (audioUploader.active()) {
+      Serial.println("ERR mic_upload_busy");
+      return;
+    }
+    if (microphoneEngine.recordState() == mic::RecordState::kRecording) {
+      Serial.println("ERR mic_recording");
+      return;
+    }
+    if (microphoneEngine.dumpActive()) {
+      Serial.println("ERR mic_dump_busy");
+      return;
+    }
+    switch (audioUploader.start()) {
+      case upload::Client::StartResult::Ok:
+        return;
+      case upload::Client::StartResult::Busy:
+        Serial.println("ERR mic_upload_busy");
+        return;
+      case upload::Client::StartResult::DumpBusy:
+        Serial.println("ERR mic_dump_busy");
+        return;
+      case upload::Client::StartResult::NoRecording:
+        Serial.println("ERR mic_no_recording");
+        return;
+      case upload::Client::StartResult::NotConfigured:
+        Serial.println("ERR mic_upload_not_configured");
+        return;
+      case upload::Client::StartResult::WifiDown:
+        Serial.println("ERR mic_upload_wifi");
+        return;
     }
     return;
   }
@@ -744,7 +828,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 012] INMP441 10-second recording / Arduino");
+  Serial.println("\n[experiment 013] Wi-Fi audio upload / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -769,6 +853,10 @@ void setup() {
   // Report the microphone plan without installing the RX driver: capture stays
   // off and the INMP441 sees no clocks until an explicit `mic start`.
   microphoneEngine.begin();
+  // Copy and validate the optional receiver settings. Nothing connects and no
+  // audio moves until an explicit `mic upload`; the token is never logged.
+  audioUploader.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_PATH,
+                      AUDIO_UPLOAD_TOKEN);
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -792,6 +880,9 @@ void loop() {
   // a whole HTTP request, so the OLED and servo schedules below keep running.
   wifiManager.update();
   webServer.update();
+  // One small upload step per loop: no wait for the socket, and the completed
+  // PSRAM recording is read in place.
+  audioUploader.update();
   // Audio streams one small chunk per loop and never waits for the DMA queue.
   audioEngine.update();
   // One non-blocking RX read per loop; capture only runs after `mic start`.
