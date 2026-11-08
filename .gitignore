@@ -1,3 +1,6 @@
+# Local secrets: real Wi-Fi credentials and API token must never be tracked.
+src/secrets.h
+
 # Local build tools and generated files
 .venv/
 .pio/

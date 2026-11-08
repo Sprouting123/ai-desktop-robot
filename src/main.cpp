@@ -10,6 +10,23 @@
 #include "mood_controller.h"
 #include "motion_engine.h"
 #include "servo_controller.h"
+#include "web_server.h"
+#include "wifi_manager.h"
+
+// Local Wi-Fi credentials and the API token live in an untracked file. The
+// project still builds without it; networking reports itself as disabled.
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
+#ifndef API_TOKEN
+#define API_TOKEN ""
+#endif
 
 #ifndef RGB_LED_PIN
 #error "Select diagnostics, rgb_gpio48, or rgb_gpio38 in PlatformIO."
@@ -38,6 +55,11 @@ motion::Engine motionEngine(servo1Controller, servo2Controller);
 // Mood couples one expression with one motion profile through the existing
 // eyes and motion entry points.
 mood::Controller moodController(eyesEngine, motionEngine);
+// Networking only calls the same controllers as the serial commands. It does
+// not own a second copy of expression, motion or servo state.
+wifi::Manager wifiManager;
+web::Server webServer(wifiManager, eyesEngine, moodController, motionEngine,
+                      servo1Controller, servo2Controller);
 const char* oledDriver = "none";
 bool oledDrawCalled = false;
 bool eyesVisible = false;
@@ -80,7 +102,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -412,6 +434,31 @@ void executeMood(char* args) {
                 eyes::name(eyesEngine.expression()), motion::name(motionEngine.kind()));
 }
 
+void executeWifi(char* args) {
+  if (std::strcmp(args, "status") == 0) {
+    wifiManager.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "reconnect") == 0) {
+    if (!wifiManager.enabled()) {
+      Serial.println("ERR wifi_disabled; fill in src/secrets.h and rebuild");
+      return;
+    }
+    wifiManager.reconnect();
+    Serial.println("OK wifi=reconnect");
+    return;
+  }
+  Serial.println("ERR wifi_usage; use help");
+}
+
+void executeWeb(char* args) {
+  if (std::strcmp(args, "status") == 0) {
+    webServer.printStatus();
+    return;
+  }
+  Serial.println("ERR web_usage; use help");
+}
+
 bool isPadding(char ch) { return ch == ' ' || ch == '\t'; }
 
 void executeCommand() {
@@ -453,6 +500,16 @@ void executeCommand() {
     char* args = text + 4;
     while (isPadding(*args)) ++args;
     executeMood(args);
+  } else if (std::strncmp(text, "wifi", 4) == 0 &&
+             (text[4] == '\0' || isPadding(text[4]))) {
+    char* args = text + 4;
+    while (isPadding(*args)) ++args;
+    executeWifi(args);
+  } else if (std::strncmp(text, "web", 3) == 0 &&
+             (text[3] == '\0' || isPadding(text[3]))) {
+    char* args = text + 3;
+    while (isPadding(*args)) ++args;
+    executeWeb(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -533,7 +590,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 006-2] OLED eyes + dual SG90 motion/mood / Arduino");
+  Serial.println("\n[experiment 008] Wi-Fi LAN control / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -547,6 +604,13 @@ void setup() {
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
+  // Both calls only configure state or start a background attempt; no wait.
+  // With an empty SSID the network stays disabled and every local function
+  // (OLED, servos, serial) continues to work.
+  wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
+  webServer.begin(API_TOKEN);
+  wifiManager.printStatus();
+  webServer.printStatus();
 }
 
 void loop() {
@@ -556,6 +620,10 @@ void loop() {
     if (ch < 0) break;
     receiveByte(static_cast<uint8_t>(ch));
   }
+  // Networking is advanced in small steps. It never waits for a connection or
+  // a whole HTTP request, so the OLED and servo schedules below keep running.
+  wifiManager.update();
+  webServer.update();
   // One dirty display region per loop; never blocks waiting for a full frame.
   eyesEngine.update();
   // The motion engine only advances a state machine and sets new targets; it

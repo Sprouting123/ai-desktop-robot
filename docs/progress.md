@@ -1,22 +1,24 @@
 # 项目进度与交接
 
-最后更新：2026-11-07（Asia/Shanghai）
+最后更新：2026-11-08（Asia/Shanghai）
 
 ## 当前状态
 
 - **实验 001 已验收：** GPIO48 板载 RGB LED 红 → 绿 → 蓝循环，每色约 1 秒；构建、烧录校验、串口和用户实物观察均有记录。
 - **管理机制已建立：** 规则、进度和交接入口已提交为 `93c9ce6`；继续随项目状态维护。
 - **实验 002 已验收：** 六个串口命令已实现、构建与烧录通过、38 项实机串口检查通过；用户在 VS Code Monitor 中确认红绿蓝保持且 off 熄灯。实验 002 验收时设备启动为 off，不再自动循环。
-- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 006。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
+- **实验 003 第一阶段：已验收（I²C 通信）。** 三环境构建、GPIO48 烧录及写入校验通过，52 项实机串口检查通过；连续两次只发现 0x3C，设备数 1、错误数 0。实验 003 阶段设备运行该版本；当前设备运行实验 008。OLED 型号未确认；第一阶段历史记录保留，第二阶段状态见下一条。见[实验 003](experiments/003-i2c-scan.md)。
 - **实验 003 第二阶段：已验收（SH1106 首次显示）。** U8g2 2.36.17 已加入；默认 SH1106，支持串口切换 SSD1306。最终三环境构建和 GPIO48 烧录校验通过，65 项实机串口检查全部通过；用户已确认 SH1106 画面完整、没有问题；SSD1306 对比画面由用户反馈异常，显示未通过；保留 SH1106 为默认方案。
 - **实验 004 已验收：** 十种持续表情、一次性眨眼、状态查询与 ASCII 帧缓冲调试已实现；默认开机进入 normal 眼睛画面。三环境构建通过，GPIO48 烧录及区域 hash 校验通过；`scripts/test_serial_eyes.py` 的 244 项串口/软件检查全部通过，十种表情帧缓冲哈希互不相同，自动眨眼在命令服务期间正常发生，内部堆与最大区域传输时间稳定。用户于 2026-11-07 按实验 004 第 9 节逐项观察，确认十种表情、手动/自动眨眼与显示均正常，见[实验 004](experiments/004-oled-eyes.md)。
 - **实验 005 已验收：** SG90 单舵机控制已实现：GPIO4、50Hz LEDC、14 位分辨率、软件限位 60–120°、默认输出关闭、非阻塞渐进运动和 `servo stop` 放松策略。三环境构建、GPIO48 烧录校验和 `scripts/test_serial_servo.py` 的 348 项串口/软件检查通过，2 分钟连续运行无失败、无复位、堆稳定。2026-11-07 用户上电完成第 8 节观察，反馈 `servo center`/`75`/`105`/`120`/`60`、运动中 `servo stop` 与恢复、OLED 并行运行全部正常，见[实验 005](experiments/005-servo.md)。
 - **实验 006 第一阶段：已验收。** 两个独立 `servo::Controller` 实例：舵机 1 GPIO4/通道 0，舵机 2 GPIO5/通道 1，均 50Hz、14 位、60–120°。保留旧 `servo ...` 命令（仍指舵机 1），新增 `servo1 ...`、`servo2 ...`、`servo both center|stop`。三环境构建、GPIO48 烧录校验和 `scripts/test_serial_dual_servo.py` 的 557 项串口/软件检查通过，2 分钟连续运行无失败、堆稳定。2026-11-07 用户先后确认舵机 1、舵机 2 单独测试和双舵机同时运动正常；运动中 `servo both stop` 因动作过快未能人工复现，仅有软件证据；供电余量与电流未测量。
 - **实验 006 第二阶段：已验收。** 新增 `motion neutral|wiggle|together|alternate|stop|status` 非阻塞动作序列和 `mood happy|sad|angry|normal|status|stop` 表情联动；动作参数 75–105°，mood 80–100°、85–95°、82–98°，全部在 60–120° 限位内。新脚本 `scripts/test_serial_motion.py` 的 893 项检查通过（含第一阶段的独立停止回归），2 分钟连续运行 `failures=0`、无复位、堆稳定；GPIO48 已烧录实验 006-2 固件。2026-11-07 用户在外部 5V 上电条件下逐项确认四个动作、运动中 `motion stop`、四个 mood 及 `mood stop` 均正常；验收以用户观察为依据，未做定量测量，见[实验 006](experiments/006-dual-servo.md)。
+- **实验 007 已验收：** 纸板机械原型完成后，用户于 2026-11-08 报告安装的两只舵机与 OLED 情绪联动运行正常。证据为用户观察，没有归档照片、视频或测量数据；结构尺寸、电流、供电稳定性、实际角度、噪声与带载均未测量。见[实验 007](experiments/007-cardboard-prototype.md)。
+- **实验 008 已验收（2026-11-08 用户报告测试通过）：** 新增非阻塞 Wi-Fi STA、受限 HTTP API 与手机控制页。三环境构建通过；`scripts/test_serial_wifi.py` 在 Wi-Fi 凭据为空的固件上 910 项、临时不可达 SSID 固件上 903 项（HTTP 跳过）检查通过。2026-11-08 用户填入家庭 2.4GHz 凭据后，设备实测 `WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`，`GET /` 返回 200（8980 字节），`GET /api/status` 返回合法 JSON；完整回归（含 HTTP 401/403/405/413/429 限流、令牌不进响应、`wifi reconnect` 后 HTTP 恢复）**1038 项全部通过**。测试期间外部 5V 接通并由用户授权驱动舵机；2026-11-08 用户报告浏览器/手机页面与远程控制测试通过，记为已验收，证据为用户观察（未细分项目、未做定量测量）。见[实验 008](experiments/008-wifi-control.md)。
 - **Git 同步：** 用户于 2026-11-07 确认实验 004 验收后授权提交与推送；实现与验收提交 [ba460c2](https://github.com/Sprouting123/ai-desktop-robot/commit/ba460c2b2763706f5aa557e41cc617b28469fd61) 已推送至 `origin/main`，远程分支 commit 与本地一致。实验 006 第一阶段的实现、测试脚本与文档提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已于 2026-11-07 推送并核对远程一致。实验 003 两阶段实现提交 [252d4b7](https://github.com/Sprouting123/ai-desktop-robot/commit/252d4b73d483bdb89321c18138efef540e6a40c8) 已推送并核对一致。此前实验 002 用户已授权提交与推送。实验 002 实现提交 [e702fc1](https://github.com/Sprouting123/ai-desktop-robot/commit/e702fc14f8708e335d48b849d8a28a41e2ebfc62) 已于 2026-11-07 推送到 `origin/main`，并通过远程查询核对一致。
 - 项目固定路径：`/home/hy/ai-desktop-robot`。
 - 仓库：[Sprouting123/ai-desktop-robot](https://github.com/Sprouting123/ai-desktop-robot)，开发分支 `main`。
-- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[006-dual-servo.md](experiments/006-dual-servo.md)；上一阶段：[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
+- 工作规则：[AGENTS.md](../AGENTS.md)；当前实验：[008-wifi-control.md](experiments/008-wifi-control.md)；前置实验：[007-cardboard-prototype.md](experiments/007-cardboard-prototype.md)、[006-dual-servo.md](experiments/006-dual-servo.md)、[005-servo.md](experiments/005-servo.md)；更早：[004-oled-eyes.md](experiments/004-oled-eyes.md)；I²C/显示基线：[003-i2c-scan.md](experiments/003-i2c-scan.md)；RGB 基线：[002-serial-led.md](experiments/002-serial-led.md)；已归档实验：[001-rgb-led.md](experiments/001-rgb-led.md)。
 
 ## 长期目标与协作方式
 
@@ -40,6 +42,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 005：SG90 单舵机 | 已验收 | 三环境构建、GPIO48 烧录校验、348 项串口/软件检查通过；2 分钟连续运行无失败、堆稳定；2026-11-07 用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，见[实验 005](experiments/005-servo.md) |
 | 实验 006：双 SG90 舵机（第一阶段） | 已验收 | 三环境构建、GPIO48 烧录校验、557 项串口/软件检查通过；2 分钟连续运行无失败、堆稳定；两个 LEDC 通道独立初始化；2026-11-07 用户确认舵机 1、舵机 2 单独测试及双舵机同时运动正常；运动中 `servo both stop` 未实物复现，供电余量未测，见[实验 006](experiments/006-dual-servo.md) |
 | 实验 006：动作序列与表情联动（第二阶段） | 已验收 | 三环境构建、GPIO48 烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；2026-11-07 用户确认 `motion neutral/wiggle/together/alternate`、运动中 `motion stop`、`mood happy/sad/angry/normal` 和 `mood stop` 均正常；未做定量测量，见[实验 006](experiments/006-dual-servo.md) |
+| 实验 007：纸板机械原型 | 已验收 | 2026-11-08 用户报告安装后的两只舵机与 OLED 情绪联动正常；证据为用户观察，未归档照片/视频，结构尺寸、电流、供电稳定性、实际角度未测量，见[实验 007](experiments/007-cardboard-prototype.md) |
+| 实验 008：Wi-Fi 与局域网控制 | 已验收 | 三环境构建通过；凭据为空 910 项、不可达 SSID 903 项通过；2026-11-08 真实联网成功（IP 192.168.31.17、RSSI -40）且含 HTTP 的完整回归 1038 项通过；用户报告浏览器/手机页面与远程控制测试通过，证据为用户观察，见[实验 008](experiments/008-wifi-control.md) |
 
 “已验收”仅用于已经有相应证据的工作。固件编译成功、日志正常、用户实物确认分别记录；未来未取得观察的硬件实验使用“待实物验收”。
 
@@ -59,6 +63,8 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 最新已确认接线 | 用户报告：USB 供电；OLED VCC → 3V3、GND → GND、SDA → GPIO8、SCL → GPIO9；Wire 100kHz |
 | SG90 舵机 1（用户报告） | 180° SG90；信号 → GPIO4；红线 → 外部 5V 正极；棕线 → 外部电源负极；ESP32 GND 共地；外部电源标称 5V 5A。2026-11-07 实物运动与停止/恢复经用户确认正常；未做电流或角度测量 |
 | SG90 舵机 2（用户报告） | 暂定 180° SG90；信号 → GPIO5；与舵机 1 共用外部 5V 并共地。2026-11-07 用户确认单独测试与双舵机同时运动正常；实际角度、电流未测量 |
+| Wi-Fi | STA、家庭 2.4GHz；SSID/密码/令牌位于本机 `src/secrets.h`（被 Git 忽略）；2026-11-08 实测连接成功：`ip=192.168.31.17 rssi=-40 channel=3`，电脑同网段（192.168.31.29）可 ping 通；IP 由 DHCP 分配，重启后可能变化 |
+| 局域网控制 | HTTP 80 端口、明文，仅限可信家庭局域网；写操作需 `X-Auth-Token`；禁止公网端口映射或不受控 AP |
 
 用户此前报告已备有 OLED、两个 SG90、INMP441、MAX98357A 与扬声器、5V 5A 电源及基础工具。OLED 已按用户报告接线，实验 003 已确认 0x3C 地址应答，SH1106 首次显示获用户确认，实际控制器型号仍待确认；第一只 SG90 接 GPIO4、第二只接 GPIO5，均由外部 5V 供电并与 ESP32 共地；实验 005 和实验 006 第一阶段的软件与 2026-11-07 实物验收均已通过；其余模块尚未在本工程逐项核验或完成接线实验；机器人摄像头尚未选型，不能与电脑的 USB 摄像头混为一谈。
 
@@ -144,6 +150,27 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 - 测试发现并修正：手动接管最初会同时关闭另一只舵机，破坏第一阶段的独立停止行为；现改为只丢弃序列、不碰输出。测试正则分组错误也已修正，固件本身无对应问题。
 - 第二阶段自动化测试期间外部 5V 始终保持断开，只验证固件、串口和 PWM 逻辑；随后用户按实验 006 第 7.4 节接通外部 5V，逐项确认四个动作、运动中 `motion stop`、四个 mood 和 `mood stop` 均正常，第二阶段记为已验收。验收依据为用户观察，动作方向、幅度、噪声和温度没有定量测量；运动中 `servo both stop` 的实物补测未执行，仍只有软件证据。
 
+## 实验 007 的验证摘要
+
+- 用户把已验收的 OLED 与两只 SG90 装入纸板机械结构，使用实验 006 第二阶段固件运行；接线与引脚没有改动。
+- 2026-11-08 用户报告：纸板机械原型已经完成，安装后的两只舵机与 OLED 情绪联动运行正常。实验 007 记为已验收。
+- 没有保存照片、视频、串口日志或测量数据；纸板尺寸、重量、摇臂长度、电流、电压跌落、发热、实际角度、噪声和带载均未测量，不能据本次验收推断。
+
+## 实验 008 的验证摘要
+
+- 新增 `src/wifi_manager.*`（非阻塞 STA 状态机）、`src/web_server.*`（基于 `WiFiServer` 的受限 HTTP/1.1 服务器）、`src/web_ui.h`（PROGMEM 单页）、`src/secrets.example.h`；`main.cpp` 增加 `wifi status|reconnect`、`web status`，每轮 `loop()` 先更新 Wi-Fi/HTTP 再更新 OLED 与动作。
+- Wi-Fi：仅 STA、2.4GHz；单次超时 20s；退避 2/5/10/20/30s；`setAutoReconnect(false)`、`setSleep(false)`、`persistent(false)`；SSID 为空进入 `disabled`。密码与令牌不打印。
+- HTTP：80 端口、单连接、`Connection: close`；请求缓冲 1024 字节、请求体 128 字节、超时 3s；响应用 `MSG_DONTWAIT` 分多轮发送（5s 未发完即关闭），客户端停止读取不阻塞主循环；`GET /`、`GET /api/status`、`GET /favicon.ico`、`POST /api/mood`、`POST /api/motion`；写操作须带 `X-Auth-Token`（401/403/503），限流 30 请求/10 写每 10s（429）；名称走允许列表并复用现有控制器，无串口透传、不绕过限位。
+- 页面：无 CDN/外网请求；令牌只存于当前页面 JavaScript 内存；停止按钮仅关闭软件 PWM，不是断电或机械制动。明文 HTTP 仅限可信局域网。
+- `.gitignore` 已加入 `src/secrets.h`，`git check-ignore` 验证通过；实际凭据只在本机。
+- 构建：`diagnostics`、`rgb_gpio48`、`rgb_gpio38` 全部 SUCCESS；`rgb_gpio48` Flash 812681 字节、静态 RAM 50672 字节；填入真实凭据后 Flash 812717 字节，烧录写入 813088 字节。
+- Wi-Fi 凭据为空的固件：`scripts/test_serial_wifi.py` 910 项检查通过；HTTP 按预期跳过，启动为 `WIFI_DISABLED`、`WEB listening=0`。
+- 临时不可达 SSID 固件：50 秒捕获显示 20.9s `WIFI_TIMEOUT`、`WIFI_RETRY delay_ms=2000`、22.9s 第二次尝试；连接期间 `motion` 与串口正常应答，`wifi reconnect` 立即返回并开始第三次尝试，`WEB listening=0`。该固件完整回归 903 项通过，HTTP 跳过，无复位或卡死；测试后已恢复本地凭据并重新烧录。最终构建（仅 HTTP 响应发送改为非阻塞）再以 910 项串口回归确认。
+- 真实 Wi-Fi（2026-11-08）：用户填好 `src/secrets.h` 后重新构建烧录（813088 字节），串口依次打印 `WIFI_CONNECTING`、`WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`、`WEB_LISTEN state=listening port=80`；电脑（有线 192.168.31.29）ping 通、`curl` 取得页面 200（8980 字节）与合法 `/api/status` JSON。测试期间舵机外部 5V 保持接通，用户明确授权自动测试驱动舵机。
+- 含 HTTP 的完整回归：`scripts/test_serial_wifi.py` **1038 项全部通过**（结束时设备 `uptime_ms=187245`，约 3 分钟），覆盖页面/CSP/无外网资源、状态 JSON 字段、缺失/错误令牌 401/403 且不改变状态、合法 mood/motion 复用控制器、非法名称与畸形/超大请求、GET/POST 方法限制、令牌误放 URL、动作期间轮询与 OLED 并行、写限流 429 与窗口恢复、`wifi reconnect` 后 HTTP 恢复、固件计数器、所有响应不含令牌；结束时两路脉宽为 0、RGB 熄灭、屏幕回到眼睛画面。
+- Ubuntu 浏览器与手机的实际页面操作、远程情绪/动作实物效果仍需用户观察确认；断路由器后的自动重连、长时间联网稳定性未验证。
+- 原始捕获与备份在 `work/`（`008-wifi-fail-capture.py`、`secrets.h.backup-008`），被 Git 忽略，未归档入库。
+
 ## 未决事项与已解决问题
 
 | 事项 | 状态 / 影响 | 后续处理 |
@@ -165,12 +192,20 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 实验 006 第二阶段 | 已验收 | 2026-11-07 用户接通外部 5V，确认四个动作、运动中 `motion stop`、四个 mood 和 `mood stop` 均正常；软件侧另有 893 项串口/软件检查与 2 分钟连续运行证据；未做定量测量 |
 | 实验 006 动作中 `servo both stop` | 软件已验证，实物未补测 | 第一阶段因动作过快未复现；第二阶段约 20 秒的 `motion wiggle` 可补测，但用户尚未执行；不影响 `motion stop` 已获实物确认 |
 | 实验 006 Git 同步 | 已完成 | 第一阶段的实现与验收提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d)、第二阶段的实现与验收提交 [cc9d642](https://github.com/Sprouting123/ai-desktop-robot/commit/cc9d642b9c0e6f273aca30947a9648985d465467) 均已推送至 `origin/main`；`git ls-remote` 核对远程与本地 commit 一致 |
+| 实验 007 未测量项 | 未测量 | 结构尺寸、重量、摇臂、电流、电压跌落、发热、实际角度、噪声、带载均无数据；结构或负载变化后需重新观察 |
+| 实验 008 真实 Wi-Fi 连接 | 已验证（自动） | 2026-11-08 实测 `WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`，`WEB listening=1`；IP 为 DHCP 分配，重启后可能变化 |
+| 实验 008 HTTP 页面与 API | 已验收（自动 + 用户观察） | 1038 项回归含 HTTP 通过；2026-11-08 用户报告页面与远程控制测试通过 |
+| 实验 008 远程舵机实物效果 | 已验收（用户观察） | 自动测试在用户授权、外部 5V 接通时驱动过舵机；用户报告网页控制测试通过，未做定量测量 |
+| 实验 008 安全边界 | 已知限制 | 明文 HTTP、令牌保护写操作、仅供可信局域网；禁止公网映射或不受控 AP；未做渗透测试 |
+| 实验 008 Git 同步 | 进行中 | 2026-11-08 用户授权提交并推送；本次提交完成后核对远程 |
 
 实验 003 已核对 USB 目标；测试完成后脚本关闭了串口，用户可打开 VS Code Monitor。后续烧录或自动测试前，应关闭用户的监视器。
 
 ## 下一步与后续候选
 
-**当前下一步：确定实验 007 方向。** 实验 006 两阶段均已验收，动作序列与表情联动可用。候选方向：接入 Wi-Fi 与云端 AI 的最小对话链路、增加麦克风/扬声器、或先做机械结构与供电测量（双舵机同时动作的电流、电压跌落仍未测）。启动前需用户确定优先级、硬件型号与验收标准；可选的实物补测是在 `motion wiggle` 运行中输入 `servo both stop`，补齐第一阶段遗留边界。
+**当前下一步：规划实验 009。** 实验 008 已由用户报告验收通过（联网、HTTP API、页面与远程控制），固件与文档准备提交。下一步需用户决定方向：继续补齐实验 008 的稳健性（断路由器自动重连、长时间联网稳定性），还是进入长期目标中的云端 AI 对话（需要先定服务、凭据保存方式和最小交互行为）。无论哪条，都先写实验 009 的目标、硬件/接线和验收标准再动手。设备当前 IP 为 `192.168.31.17`，由 DHCP 分配，重启后可能变化，用 `wifi status` 查询。完整步骤与安全提醒见[实验 008 第 7 节](experiments/008-wifi-control.md)。
+
+实验 006 遗留的可选补测仍可在 `motion wiggle` 运行中输入 `servo both stop` 完成；实验 007 的机械/电气定量测量也尚未进行。
 
 下面只是长期目标的拆分候选，尚未排期或获得实施指令：
 
@@ -199,6 +234,9 @@ ChatGPT 负责技术指导、原理学习与验收；Codex / Work 负责代码�
 | 2026-11-07 | 实验 005：SG90 单舵机控制，GPIO4、50Hz LEDC（S3 14 位）、60–120° 软件限位、非阻塞渐进运动与 `servo stop` 放松策略；三环境构建、烧录校验、348 项串口/软件检查及 2 分钟连续运行通过；用户上电确认 60–120° 运动、停止/恢复与 OLED 并行正常，记为已验收 | [实验 005](experiments/005-servo.md)；实现与验收提交 [f33dd0e](https://github.com/Sprouting123/ai-desktop-robot/commit/f33dd0ef6494d93271a6fd85a918069d772c8a7c) 已推送并核对一致 |
 | 2026-11-07 | 实验 006 第一阶段：两个 `servo::Controller` 实例（GPIO4/通道 0、GPIO5/通道 1），保留旧 `servo` 命令并新增 `servo1`/`servo2`/`servo both`；三环境构建、烧录校验、557 项串口/软件检查及 2 分钟连续运行通过；用户确认两只单独测试和双舵机同时运动正常，运动中 `servo both stop` 未实物复现 | [实验 006](experiments/006-dual-servo.md)；实现与验收提交 [4693430](https://github.com/Sprouting123/ai-desktop-robot/commit/469343005ba6b7cd3d704b25fd1d6d338ad52d4d) 已推送并核对一致 |
 | 2026-11-07 | 实验 006 第二阶段：`motion` 非阻塞动作序列与 `mood` 表情联动，含中途停止、切换、手动接管、非法命令保护；三环境构建、烧录校验、893 项串口/软件检查及 2 分钟连续运行通过；用户接通外部 5V 逐项确认动作、停止、mood 与 `mood stop` 正常，记为已验收 | [实验 006](experiments/006-dual-servo.md)；实现与验收提交 [cc9d642](https://github.com/Sprouting123/ai-desktop-robot/commit/cc9d642b9c0e6f273aca30947a9648985d465467) 已推送并核对一致 |
+| 2026-11-08 | 实验 007：纸板机械原型完成，用户确认安装后的两只舵机与 OLED 情绪联动正常，记为已验收；结构尺寸、电流、供电稳定性、实际角度未测量 | [实验 007](experiments/007-cardboard-prototype.md)；证据为用户观察，无归档照片/视频 |
+| 2026-11-08 | 实验 008：非阻塞 Wi-Fi STA、受限 HTTP API、`X-Auth-Token` 写保护、手机控制页、本地凭据模板与忽略规则；三环境构建通过，Wi-Fi 凭据为空的固件 910 项、不可达 SSID 固件 903 项检查通过 | [实验 008](experiments/008-wifi-control.md)；本机捕获与备份在 `work/`，被 Git 忽略 |
+| 2026-11-08 | 实验 008 真实联网：用户填入 2.4GHz 凭据后烧录，`WIFI_CONNECTED ip=192.168.31.17 rssi=-40 channel=3`；含 HTTP 的完整回归 1038 项通过；外部 5V 接通（用户授权）下自动测试驱动过舵机；用户随后报告浏览器/手机页面与远程控制测试通过，实验 008 记为已验收 | [实验 008](experiments/008-wifi-control.md)；IP 由 DHCP 分配；验收证据为用户观察 |
 
 ## 维护方法
 

@@ -6,6 +6,8 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 
 - [协作规则](AGENTS.md)：工作流程、硬件约束、当前串口接口与 Git 同步规则。
 - [当前进度与交接](docs/progress.md)：里程碑、验证证据、未决问题和下一步。
+- [实验 008：Wi-Fi 联网与局域网控制](docs/experiments/008-wifi-control.md)：非阻塞 STA 连接、令牌保护的 HTTP API、手机控制页；已联网并通过 1038 项回归，用户报告页面与远程控制验收通过。
+- [实验 007：纸板机械原型](docs/experiments/007-cardboard-prototype.md)：已验收的整机机械安装记录与未测量边界。
 - [实验 006：双 SG90 舵机协同控制](docs/experiments/006-dual-servo.md)：GPIO4/GPIO5 双通道、旧命令兼容（第一阶段已验收）；动作序列、表情联动、中途取消与手动接管（第二阶段已验收）。
 - [实验 005：SG90 单舵机控制](docs/experiments/005-servo.md)：GPIO4、50Hz PWM、限位、渐进运动，以及 2026-11-07 已通过的实物验收记录与复验步骤。
 - [实验 004：OLED 桌宠表情引擎](docs/experiments/004-oled-eyes.md)：十种表情、眨眼、动画状态机和验收步骤。
@@ -13,7 +15,7 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 - [实验 002：串口命令控制 RGB](docs/experiments/002-serial-led.md)：已验收的 RGB 命令基线、串口测试及 VS Code 操作步骤。
 - [实验 001：RGB 自动循环](docs/experiments/001-rgb-led.md)：已归档的首次实验，记录保持不变。
 
-## 当前功能：OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
+## 当前功能：Wi-Fi 局域网控制、OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
 
 Ubuntu + VS Code / PlatformIO + Arduino；ESP32-S3、16 MB Flash、8 MB PSRAM、GPIO48 均已验证。默认环境 `rgb_gpio48`。
 
@@ -23,10 +25,14 @@ Ubuntu + VS Code / PlatformIO + Arduino；ESP32-S3、16 MB Flash、8 MB PSRAM、
 
 在此之上新增非阻塞动作序列：`motion neutral`、`motion wiggle`（约 20 秒小幅交替，便于中途停止）、`motion together`、`motion alternate`、`motion stop`、`motion status`。每个动作都有固定步数和终点，结束后两只停在 90° 并保持输出；`motion stop` 立即停止两路脉冲，不自动恢复。`mood happy|sad|angry|normal` 把表情与动作绑定为统一入口：happy/sad 为不同节奏的轻微摆动，angry 为较快的反向交替，normal 回到中位；`mood stop` 只停止动作并关闭脉冲，屏幕保留当前表情，回复中明确写出 `screen=kept`。所有 `eyes` 命令仍可单独使用，不会隐式启动动作。第二阶段已通过构建、烧录、893 项串口/软件检查和 2 分钟连续运行；2026-11-07 用户接通外部 5V 逐项确认动作、运动中停止、四个 mood 与 `mood stop` 均正常，记为已验收（未做定量测量）。
 
-原有串口命令保留：`red`、`green`、`blue`、`off`、`status`、`help`、`i2cscan`、`oled_sh1106`、`oled_ssd1306`、`oled_status`。颜色持续保持，不自动切换；输入长度有上限，异常行不会执行。`i2cscan` 使用 GPIO8/9、100kHz 扫描 0x08–0x77；OLED 测试图与眼睛画面可互相切换，`oled_status` 显示当前驱动和画面类型。SH1106 已获用户实物显示确认，SSD1306 测试图由用户反馈异常，因此眼睛固定使用 SH1106；控制器型号仍未鉴定。实验 004 的十种表情与眨眼已于 2026-11-07 获用户实物验收，最新实测状态见实验 004。
+实验 008 增加 Wi-Fi STA 与局域网控制。启动标记为 `[experiment 008] Wi-Fi LAN control / Arduino`；Wi-Fi 连接由非阻塞状态机管理，单次超时 20s，失败按 2/5/10/20/30s 退避，串口可随时用 `wifi status` 查询、`wifi reconnect` 重连。OLED、双舵机、动作与串口在联网、超时或掉线期间继续工作。SSID/密码/令牌放在本机 `src/secrets.h`（已被 `.gitignore` 忽略），模板为 `src/secrets.example.h`；不要把真实凭据提交到仓库。
+
+设备联网后可在同一局域网访问 `http://<设备IP>/`：页面显示 Wi-Fi/IP/RSSI、表情、动作与两只舵机状态，提供开心/难过/生气/平静、摆动/同步/交替按钮和醒目的停止按钮。`GET /api/status` 返回状态 JSON，`POST /api/mood`、`POST /api/motion` 复用现有控制器；写操作必须带 `X-Auth-Token` 请求头，令牌只在页面内存中保存，不进入 URL 或浏览器持久存储。服务限制请求体（128 字节）、请求缓冲（1024 字节）和频率（10s 内 30 请求/10 写），未授权请求不会触发动作。该 HTTP 为明文，仅限可信家庭局域网，禁止公网端口映射；停止按钮只关闭软件 PWM，不是物理断电或机械制动。截至 2026-11-08：构建通过；Wi-Fi 凭据为空/不可达 SSID 的串口回归 910/903 项通过；填入家庭 2.4GHz 凭据后实测联网成功（`ip=192.168.31.17 rssi=-40`），含 HTTP 的完整回归 1038 项全部通过；用户报告浏览器/手机页面与远程控制测试通过，实验 008 记为已验收（证据为用户观察，未做定量测量），见[实验 008](docs/experiments/008-wifi-control.md)。
+
+原有串口命令保留：`red`、`green`、`blue`、`off`、`status`、`help`、`i2cscan`、`oled_sh1106`、`oled_ssd1306`、`oled_status`。颜色持续保持，不自动切换；输入长度有上限，异常行不会执行。`i2cscan` 使用 GPIO8/9、100kHz 扫描 0x08–0x77；OLED 测试图与眼睛画面可互相切换，`oled_status` 显示当前驱动和画面类型。SH1106 已获用户实物显示确认，SSD1306 测试图由用户反馈异常，因此眼睛固定使用 SH1106；控制器型号仍未鉴定。实验 004 的十种表情与眨眼已于 2026-11-07 获用户实物验收，最新实测状态见实验 004。实验 007 的纸板机械原型于 2026-11-08 获用户确认：安装后两只舵机与 OLED 情绪联动正常；尺寸、电流和供电稳定性未测量。
 
 在 VS Code 运行 **PlatformIO: Serial Monitor**，点击监视器终端后直接输入命令并按 Enter。已启用本地回显与回车发送，Ctrl-C 退出。表情逐项验收步骤见实验 004。
 
-在项目根目录使用 `.venv/bin/pio run` 构建、`.venv/bin/pio run -t upload` 烧录、`.venv/bin/pio device monitor` 打开监视器。关闭监视器并保持舵机外部 5V 断开后，可运行 `.venv/bin/python scripts/test_serial_motion.py` 重复当前固件的实机检查；脚本会复位板卡、回归旧命令、检查十种表情与双舵机通道，并覆盖动作序列、中途停止、切换、手动接管和 mood 映射，以两只舵机输出关闭、RGB 熄灯、SH1106 眼睛画面结束。`scripts/test_serial_dual_servo.py` 对应实验 006 第一阶段固件，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，均保留为历史记录。
+在项目根目录使用 `.venv/bin/pio run` 构建、`.venv/bin/pio run -t upload` 烧录、`.venv/bin/pio device monitor` 打开监视器。关闭监视器并保持舵机外部 5V 断开后，可运行 `.venv/bin/python scripts/test_serial_wifi.py` 重复当前固件的实机检查；脚本会复位板卡、回归旧命令、检查十种表情与双舵机通道，覆盖动作序列、中途停止、切换、手动接管和 mood 映射，并在设备已联网且本地令牌可用时测试 HTTP API 与页面（`--no-http` 可跳过），最后关闭两只舵机输出、RGB 熄灯、恢复 SH1106 眼睛画面。`scripts/test_serial_motion.py` 对应实验 006 第二阶段固件，`scripts/test_serial_dual_servo.py` 对应第一阶段，`scripts/test_serial_servo.py` 对应实验 005，`scripts/test_serial_eyes.py` 对应实验 004，均保留为历史记录。
 
-代码分为 `src/main.cpp`（串口、RGB、I²C、屏幕、舵机与动作命令）、`src/eyes_state.*`（纯时间状态机）、`src/eyes_render.*`（表情绘图）、`src/eyes_engine.*`（动画调度与增量刷新）、`src/servo_controller.*`（PWM、限位与渐进运动）、`src/motion_engine.*`（动作序列状态机）、`src/mood_controller.*`（表情与动作映射），配置在 `platformio.ini`。`diagnostics` 不驱动 LED；`rgb_gpio38` 仅保留作其他板卡版本的备选。当前由 USB 供电；用户报告 OLED VCC/GND/SDA/SCL 分别接 3V3/GND/GPIO8/GPIO9，舵机 1 信号接 GPIO4，红/棕线接外部 5V 正/负极并与 ESP32 共地；舵机 2 信号接 GPIO5。2026-11-07 用户已确认两只舵机单独测试与双舵机同时运动正常；运动中 `servo both stop` 未实物复现，实际角度与电流未测量；完整厂家与 PCB 版本仍未确认。
+代码分为 `src/main.cpp`（串口、RGB、I²C、屏幕、舵机、动作与网络命令）、`src/eyes_state.*`（纯时间状态机）、`src/eyes_render.*`（表情绘图）、`src/eyes_engine.*`（动画调度与增量刷新）、`src/servo_controller.*`（PWM、限位与渐进运动）、`src/motion_engine.*`（动作序列状态机）、`src/mood_controller.*`（表情与动作映射）、`src/wifi_manager.*`（非阻塞 STA 状态机）、`src/web_server.*`（受限 HTTP API）、`src/web_ui.h`（手机页面），配置在 `platformio.ini`，本地凭据在 `src/secrets.h`（不入库）。`diagnostics` 不驱动 LED；`rgb_gpio38` 仅保留作其他板卡版本的备选。当前由 USB 供电；用户报告 OLED VCC/GND/SDA/SCL 分别接 3V3/GND/GPIO8/GPIO9，舵机 1 信号接 GPIO4，红/棕线接外部 5V 正/负极并与 ESP32 共地；舵机 2 信号接 GPIO5。2026-11-07 用户已确认两只舵机单独测试与双舵机同时运动正常；运动中 `servo both stop` 未实物复现，实际角度与电流未测量；完整厂家与 PCB 版本仍未确认。
