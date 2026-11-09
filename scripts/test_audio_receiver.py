@@ -133,11 +133,15 @@ def main():
     token_file.chmod(0o600)
 
     port = free_port()
+    env = os.environ.copy()
+    env.pop("DEEPSEEK_API_KEY", None)
+    env.pop("PYTHONPATH", None)
     process = subprocess.Popen(
         [sys.executable, str(RECEIVER), "--host", "127.0.0.1",
          "--port", str(port), "--token-file", str(token_file),
-         "--out-dir", str(out_dir), "--header-timeout", "0.5", "--no-asr"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+         "--out-dir", str(out_dir), "--header-timeout", "0.5", "--no-asr",
+         "--no-llm"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         ready = wait_for_line(process.stdout, "listening")
         if ready is None:

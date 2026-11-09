@@ -8,18 +8,25 @@ and never starts recognition.
 
 After a valid WAV is written, a single background worker runs the existing
 `scripts/asr_local.py --json` in a subprocess (one model at a time) and stores
-the result under work/asr/. The HTTP response is sent without waiting for the
-model, because model loading takes seconds and the ESP32 response timeout is
-five seconds.
+the result under work/asr/. If a chat session is enabled, the recognized text
+is then sent to DeepSeek through scripts/llm_client.py and the user/AI lines
+plus a session record (ID, latency, tokens, cost, status) are written under
+work/sessions/. The HTTP response is sent before either model runs, because
+model loading takes seconds and the ESP32 response timeout is five seconds.
 
 Run after generating the shared token (the file is ignored by Git):
 
     openssl rand -hex 16 > work/audio_upload_token
     chmod 600 work/audio_upload_token
+    umask 077
+    read -rsp 'DeepSeek API key: ' key; echo
+    printf '%s\\n' "$key" > work/deepseek_api_key; unset key
     .venv/bin/python scripts/audio_receiver.py
 
 The token must also be set as AUDIO_UPLOAD_TOKEN in the ignored src/secrets.h.
-Use this only on a trusted home LAN; never forward the port from the internet.
+The DeepSeek key can also come from DEEPSEEK_API_KEY; use --no-llm to keep the
+receiver ASR-only. Use this only on a trusted home LAN; never forward the port
+from the internet.
 """
 
 import argparse
@@ -41,6 +48,10 @@ import wave
 import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from llm_client import (ChatSession, DeepSeekProvider, LLMConfig, LLMError,
+                        load_api_key, valid_user_text, DEFAULT_BASE_URL,
+                        DEFAULT_KEY_FILE, DEFAULT_MAX_TOKENS, DEFAULT_MODEL)
+
 SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAMES = 160000
@@ -50,6 +61,7 @@ DEFAULT_OUT_DIR = "work/audio"
 DEFAULT_ASR_DIR = "work/asr"
 DEFAULT_ASR_PYTHON = "work/asr-venv/bin/python"
 DEFAULT_ASR_SCRIPT = "scripts/asr_local.py"
+DEFAULT_SESSION_DIR = "work/sessions"
 CRC_RE = re.compile(r"[0-9a-fA-F]{8}")
 FORMAT_HEADERS = {
     "Content-Type": "application/octet-stream",
@@ -159,10 +171,16 @@ class AsrConfig:
 
 
 class AsrPipeline:
-    """One worker, a bounded queue, and result JSON files next to the WAVs."""
+    """One worker, a bounded queue, and result JSON files next to the WAVs.
 
-    def __init__(self, config):
+    When a ChatSession is attached, a successful recognition is followed by
+    one LLM turn on the same worker. The HTTP reply was already sent, so a
+    slow API answer never delays the ESP32.
+    """
+
+    def __init__(self, config, chat=None):
         self.config = config
+        self.chat = chat
         self.root = pathlib.Path(__file__).resolve().parent.parent
         self.queue = queue.Queue(maxsize=config.queue_max)
         self.worker = None
@@ -310,6 +328,7 @@ class AsrPipeline:
             print(f"[asr] text={record['text']}", flush=True)
             print(f"[asr] inference_ms={record['inference_ms']} "
                   f"status=success file={name}", flush=True)
+            self._chat(name, record["text"], path)
             return "success"
 
         if payload and payload.get("status") == "error":
@@ -323,6 +342,34 @@ class AsrPipeline:
         self._record(job, record, started_wall, started)
         print(f"[asr] status=error reason={reason} file={name}", flush=True)
         return "error"
+
+    def _chat(self, name, text, path):
+        if self.chat is None:
+            return
+        if not valid_user_text(text):
+            print(f"[chat] skipped file={name} reason=invalid_text",
+                  flush=True)
+            return
+        print(f"[chat] user={text}", flush=True)
+        record = self.chat.ask(text, meta={
+            "wav": name,
+            "wav_path": self._relative(path),
+        })
+        if record["status"] == "success":
+            print(f"[chat] ai={record['reply_text']}", flush=True)
+            usage = record.get("usage") or {}
+            cost = record.get("cost_usd")
+            cost_text = "unknown" if cost is None else f"{cost:.6f}"
+            print(f"[chat] status=success latency_ms={record['latency_ms']} "
+                  f"prompt_tokens={usage.get('prompt_tokens', '?')} "
+                  f"completion_tokens={usage.get('completion_tokens', '?')} "
+                  f"total_tokens={usage.get('total_tokens', '?')} "
+                  f"cost_usd={cost_text} "
+                  f"session={record['session_id']} turn={record['turn']}",
+                  flush=True)
+        else:
+            print(f"[chat] status=error reason={record['reason']} "
+                  f"file={name}", flush=True)
 
     def _record_skip(self, job, reason):
         name = job.get("name", "?")
@@ -586,9 +633,49 @@ def parse_asr_config(args, parser):
     )
 
 
+def build_chat(args):
+    """Return a ChatSession, or None with a clear reason when disabled."""
+    if args.no_llm:
+        return None
+    try:
+        key_info = load_api_key(args.llm_key_file)
+    except LLMError as exc:
+        print(f"[llm] disabled reason={exc.reason} detail={exc.message}",
+              flush=True)
+        return None
+    if key_info.loose_permissions:
+        print(f"[llm] warning key_source={key_info.source} is readable by "
+              f"group/others", flush=True)
+    try:
+        provider = DeepSeekProvider(LLMConfig(
+            model=args.llm_model,
+            base_url=args.llm_base_url,
+            max_tokens=args.llm_max_tokens,
+            temperature=args.llm_temperature,
+            connect_timeout=args.llm_connect_timeout,
+            read_timeout=args.llm_read_timeout,
+        ), key_info.key)
+        chat = ChatSession(
+            provider,
+            max_turns=args.llm_history_turns,
+            max_context_chars=args.llm_max_context_chars,
+            session_dir=args.llm_session_dir,
+        )
+    except LLMError as exc:
+        print(f"[llm] disabled reason={exc.reason} detail={exc.message}",
+              flush=True)
+        return None
+    print(f"[llm] enabled provider=deepseek model={args.llm_model} "
+          f"thinking=disabled max_tokens={args.llm_max_tokens} "
+          f"history_turns={args.llm_history_turns} "
+          f"key_source={key_info.source}", flush=True)
+    return chat
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Receive a 10 s PCM upload, save a WAV, then run local ASR")
+        description="Receive a 10 s PCM upload, save a WAV, then run local ASR "
+                    "followed by a DeepSeek reply")
     parser.add_argument("--host", default="0.0.0.0",
                         help="bind address (default: 0.0.0.0, trusted LAN only)")
     parser.add_argument("--port", type=int, default=8080,
@@ -629,6 +716,32 @@ def main():
     parser.add_argument("--asr-peak-pct", type=float, default=ASR_PEAK_MIN_PCT,
                         help=f"minimum high-passed peak to run ASR "
                              f"(default: {ASR_PEAK_MIN_PCT}%% full scale)")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="run ASR without calling the chat API")
+    parser.add_argument("--llm-key-file", default=DEFAULT_KEY_FILE,
+                        help=f"ignored API key file (default: {DEFAULT_KEY_FILE})")
+    parser.add_argument("--llm-model", default=DEFAULT_MODEL,
+                        help=f"chat model (default: {DEFAULT_MODEL})")
+    parser.add_argument("--llm-base-url", default=DEFAULT_BASE_URL,
+                        help=f"OpenAI-compatible base URL "
+                             f"(default: {DEFAULT_BASE_URL})")
+    parser.add_argument("--llm-max-tokens", type=int,
+                        default=DEFAULT_MAX_TOKENS,
+                        help=f"reply token limit (default: {DEFAULT_MAX_TOKENS})")
+    parser.add_argument("--llm-temperature", type=float, default=0.7,
+                        help="reply temperature (default: 0.7)")
+    parser.add_argument("--llm-connect-timeout", type=float, default=5.0,
+                        help="API connect timeout in seconds (default: 5)")
+    parser.add_argument("--llm-read-timeout", type=float, default=30.0,
+                        help="API read timeout in seconds (default: 30)")
+    parser.add_argument("--llm-history-turns", type=int, default=6,
+                        help="previous user/assistant pairs kept in context "
+                             "(default: 6)")
+    parser.add_argument("--llm-max-context-chars", type=int, default=4000,
+                        help="maximum history characters sent to the API "
+                             "(default: 4000)")
+    parser.add_argument("--llm-session-dir", default=DEFAULT_SESSION_DIR,
+                        help=f"chat turn records (default: {DEFAULT_SESSION_DIR})")
     parser.add_argument("--process-wav", type=pathlib.Path,
                         help="run the ASR pipeline on an existing WAV and exit "
                              "(offline test, no HTTP server)")
@@ -638,13 +751,22 @@ def main():
         raise SystemExit("port must be between 1 and 65535")
     if args.header_timeout <= 0:
         raise SystemExit("header timeout must be positive")
+    if not 1 <= args.llm_max_tokens <= 8192:
+        parser.error("--llm-max-tokens must be between 1 and 8192")
+    if args.llm_connect_timeout <= 0 or args.llm_read_timeout <= 0:
+        parser.error("LLM timeouts must be positive")
+    if args.llm_history_turns < 0:
+        parser.error("--llm-history-turns must not be negative")
+    if args.llm_max_context_chars < 100:
+        parser.error("--llm-max-context-chars must be at least 100")
     asr_config = parse_asr_config(args, parser)
+    chat = build_chat(args)
 
     if args.process_wav is not None:
         path = args.process_wav
         if not path.is_file():
             raise SystemExit(f"WAV not found: {path}")
-        pipeline = AsrPipeline(asr_config)
+        pipeline = AsrPipeline(asr_config, chat)
         status = pipeline.process_existing(path)
         print(f"[asr] stopped success={pipeline.counts['success']} "
               f"error={pipeline.counts['error']} "
@@ -656,15 +778,19 @@ def main():
 
     asr = None
     if not args.no_asr:
-        asr = AsrPipeline(asr_config)
+        asr = AsrPipeline(asr_config, chat)
         asr.start()
+    elif chat is not None:
+        print("[llm] disabled reason=asr_off", flush=True)
+        chat = None
 
     server = Receiver((args.host, args.port), token, args.out_dir, max_uploads,
                       args.header_timeout, asr)
     print(f"[receiver] listening host={args.host} port={args.port} "
           f"out={args.out_dir} max_uploads={max_uploads or 'unlimited'} "
           f"asr={'off' if asr is None else 'on'} "
-          f"queue={0 if asr is None else asr_config.queue_max}; "
+          f"queue={0 if asr is None else asr_config.queue_max} "
+          f"llm={'off' if chat is None else 'on'}; "
           f"trusted LAN only", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
