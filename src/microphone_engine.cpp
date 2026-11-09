@@ -422,4 +422,157 @@ void Engine::printLevel() const {
       static_cast<unsigned long>(zeroBlocks_));
 }
 
+bool Engine::probeChannels() {
+  if (recordState_ == RecordState::kRecording || dumpActive_) return false;
+  const bool wasRunning = running_;
+
+  if (installed_) {
+    if (running_) i2s_stop(config_.port);
+    i2s_driver_uninstall(config_.port);
+    installed_ = false;
+    running_ = false;
+  }
+
+  i2s_config_t probe = {};
+  probe.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX);
+  probe.sample_rate = static_cast<int>(config_.sampleRate);
+  probe.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
+  probe.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;  // Read both slots.
+  probe.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  probe.intr_alloc_flags = 0;
+  probe.dma_buf_count = 4;
+  probe.dma_buf_len = 256;
+  probe.use_apll = false;
+  probe.tx_desc_auto_clear = false;
+  probe.fixed_mclk = 0;
+  probe.mclk_multiple = I2S_MCLK_MULTIPLE_256;
+
+  esp_err_t err = i2s_driver_install(config_.port, &probe, 0, nullptr);
+  if (err == ESP_OK) {
+    i2s_pin_config_t pins = {};
+    pins.mck_io_num = I2S_PIN_NO_CHANGE;
+    pins.bck_io_num = config_.bclkPin;
+    pins.ws_io_num = config_.wsPin;
+    pins.data_out_num = I2S_PIN_NO_CHANGE;
+    pins.data_in_num = config_.dataPin;
+    err = i2s_set_pin(config_.port, &pins);
+  }
+  if (err == ESP_OK) {
+    err = i2s_set_clk(config_.port, config_.sampleRate,
+                      I2S_BITS_PER_SAMPLE_32BIT, I2S_CHANNEL_STEREO);
+  }
+  if (err == ESP_OK) err = i2s_start(config_.port);
+
+  if (err != ESP_OK) {
+    lastErrorCode_ = err;
+    ++errors_;
+    i2s_driver_uninstall(config_.port);
+    const bool restored = install();
+    if (restored && wasRunning) start();
+    Serial.printf("MIC_PROBE error=0x%x restored=%u\n",
+                  static_cast<unsigned>(err), restored ? 1U : 0U);
+    return false;
+  }
+
+  Serial.println("MIC_PROBE_START duration_ms=3000 speak_now=1");
+  static constexpr size_t kProbeWords = 512;  // 256 stereo frames = 16 ms.
+  static constexpr int kProbeBlocks = 188;    // About 3.0 s.
+  const TickType_t timeout = 250 / portTICK_PERIOD_MS;
+  int32_t words[kProbeWords];
+  uint32_t leftPeak = 0;
+  uint32_t rightPeak = 0;
+  uint32_t leftNonzero = 0;
+  uint32_t rightNonzero = 0;
+  uint64_t leftSumSquares = 0;
+  uint64_t rightSumSquares = 0;
+  uint32_t frames = 0;
+  uint32_t timeouts = 0;
+
+  for (int block = 0; block < kProbeBlocks; ++block) {
+    size_t bytesRead = 0;
+    const esp_err_t readErr =
+        i2s_read(config_.port, words, sizeof(words), &bytesRead, timeout);
+    if (readErr == ESP_ERR_TIMEOUT) {
+      if (++timeouts >= 10) break;
+      continue;
+    }
+    if (readErr != ESP_OK) {
+      lastErrorCode_ = readErr;
+      ++errors_;
+      break;
+    }
+    const size_t count = bytesRead / sizeof(int32_t);
+    for (size_t i = 0; i + 1 < count; i += 2) {
+      const int32_t left = words[i] >> 8;
+      const int32_t right = words[i + 1] >> 8;
+      const uint32_t leftMagnitude =
+          left < 0 ? static_cast<uint32_t>(-static_cast<int64_t>(left))
+                   : static_cast<uint32_t>(left);
+      const uint32_t rightMagnitude =
+          right < 0 ? static_cast<uint32_t>(-static_cast<int64_t>(right))
+                    : static_cast<uint32_t>(right);
+      if (leftMagnitude > leftPeak) leftPeak = leftMagnitude;
+      if (rightMagnitude > rightPeak) rightPeak = rightMagnitude;
+      if (leftMagnitude != 0) ++leftNonzero;
+      if (rightMagnitude != 0) ++rightNonzero;
+      leftSumSquares += static_cast<uint64_t>(leftMagnitude) * leftMagnitude;
+      rightSumSquares += static_cast<uint64_t>(rightMagnitude) * rightMagnitude;
+      ++frames;
+    }
+  }
+
+  const uint32_t leftRms =
+      frames == 0 ? 0
+                  : static_cast<uint32_t>(
+                        sqrt(static_cast<double>(leftSumSquares) / frames));
+  const uint32_t rightRms =
+      frames == 0 ? 0
+                  : static_cast<uint32_t>(
+                        sqrt(static_cast<double>(rightSumSquares) / frames));
+  const char* signal = "none";
+  if (leftPeak != 0 && rightPeak != 0) {
+    signal = "both";
+  } else if (leftPeak != 0) {
+    signal = "left";
+  } else if (rightPeak != 0) {
+    signal = "right";
+  }
+
+  i2s_stop(config_.port);
+  i2s_driver_uninstall(config_.port);
+  installed_ = false;
+  running_ = false;
+
+  // Read the data line directly after releasing the I2S peripheral. With SD
+  // temporarily tied to 3V3 both levels are 1; with it open the pull-down is 0
+  // and the pull-up is 1; a line held low reads 0 in both cases.
+  pinMode(config_.dataPin, INPUT_PULLDOWN);
+  delay(5);
+  const int dataPulldown = digitalRead(config_.dataPin);
+  pinMode(config_.dataPin, INPUT_PULLUP);
+  delay(5);
+  const int dataPullup = digitalRead(config_.dataPin);
+
+  const bool restored = install();
+  if (restored && wasRunning) start();
+
+  Serial.printf(
+      "MIC_PROBE signal=%s frames=%lu left_peak=%lu left_rms=%lu "
+      "left_pct=%lu left_nonzero=%lu right_peak=%lu right_rms=%lu "
+      "right_pct=%lu right_nonzero=%lu timeouts=%lu data_pulldown=%d "
+      "data_pullup=%d restored=%u\n",
+      signal, static_cast<unsigned long>(frames),
+      static_cast<unsigned long>(leftPeak),
+      static_cast<unsigned long>(leftRms),
+      static_cast<unsigned long>(percentOfFullScale(leftPeak)),
+      static_cast<unsigned long>(leftNonzero),
+      static_cast<unsigned long>(rightPeak),
+      static_cast<unsigned long>(rightRms),
+      static_cast<unsigned long>(percentOfFullScale(rightPeak)),
+      static_cast<unsigned long>(rightNonzero),
+      static_cast<unsigned long>(timeouts), dataPulldown, dataPullup,
+      restored ? 1U : 0U);
+  return true;
+}
+
 }  // namespace mic

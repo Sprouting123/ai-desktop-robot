@@ -274,7 +274,48 @@ WAV 头），重新计算 PCM CRC 为 `ee814fb9`，与固件一致；峰值 28.1
 至此第 4 节的第 1–6 项全部完成，实验 013 第一阶段记为**已验收**。证据以
 用户听感和串口/接收端记录为准，未做定量音频测量。
 
-### 5.6 尚未验证
+### 5.6 第二阶段端到端验证（2026-11-09）
+
+接收端在本阶段加入自动 ASR（改动尚未提交）：WAV 原子落盘后把文件排入
+后台队列，调用 `work/asr-venv/bin/python scripts/asr_local.py --json`，
+结果写入 `work/asr/<同名>.json`；本次以 `--once`、`asr=on queue=2` 启动。
+
+流程与结果：
+
+```
+>>> mic record
+>>> green                     # RGB 变绿 = 10 秒说话窗口开始
+OK mic=recording frames=160000 duration_ms=10000
+MIC_RECORD_DONE frames=160000 bytes=320000 sample_rate_hz=16000 sample_format=s16le channels=1 crc32=0aa5589a
+>>> off
+>>> mic upload
+MIC_UPLOAD_START bytes=320000 crc32=0aa5589a host=192.168.31.29 port=8080 attempts_max=3
+MIC_UPLOAD_DONE bytes=320000 crc32=0aa5589a attempts=1
+OK mic=uploaded bytes=320000 crc32=0aa5589a
+```
+
+接收端日志：
+
+```
+[receiver] ok remote=192.168.31.17 bytes=320000 crc32=0aa5589a file=mic-20261109-230828.wav count=1
+[asr] audio file=mic-20261109-230828.wav peak_pct=7.0 hp_rms_pct=0.595 active_ms=2960
+[asr] text=这是一个AI测试你能听到吗我正在讲话
+[asr] inference_ms=281.0 status=success file=mic-20261109-230828.wav
+[asr] stopped success=1 error=0 skipped=0
+```
+
+WAV 为 320,044 字节（含 44 字节头），PCM CRC 与固件一致；主机侧
+`work/asr/mic-20261109-230828.json` 记录了音频统计、文本与耗时
+（模型加载 3,353.7 ms、推理 281.0 ms、RTF 0.028）。本次说话峰值 7.0%
+（此前一次为 28.12%），仍能完整识别，但说明说话音量偏小时余量不大。
+
+结论：录音 → 非阻塞上传 → 接收端校验保存 → 自动 ASR 的整条链路首次在
+真实硬件上一次跑通，`attempts=1`，无重试。2026-11-09 用户确认实际所说
+就是“这是一个AI测试你能听到吗我正在讲话”，识别文本逐字一致，实验 013
+第二阶段记为**已验收**（证据为用户核对；未做定量音频测量）。WAV 与 JSON
+仅在本机 `work/`，被 Git 忽略。
+
+### 5.7 尚未验证
 
 - 上传期间 OLED/舵机/音频的实际并行表现（设计上每轮只发一小块，但未在
   真实上传时同步观察）；
@@ -350,6 +391,7 @@ OLED 表情和动作/声音是否继续，作为非阻塞的直观检查（舵�
 
 1. 第一阶段已验收（2026-11-08，见 5.5）；第 6 节步骤保留用于复现。
 2. 第二阶段在接收端保存 WAV 后自动调用现有
-   `scripts/asr_local.py`，输出识别文本；不新建识别实现。
+   `scripts/asr_local.py`，输出识别文本；不新建识别实现。2026-11-09 已首次
+   端到端跑通（见 5.6），用户核对识别文本逐字一致，第二阶段已验收。
 3. 再评估 VAD/能量门限、`ct-punc` 标点与命令词热词。
 4. 如需跨网络使用，单独设计 TLS、身份认证与密钥管理，不复用当前明文方案。

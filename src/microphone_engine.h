@@ -72,6 +72,12 @@ class Engine {
   void printStatus() const;
   void printLevel() const;
 
+  // Diagnostic for a zero-level microphone: reinstall RX as stereo, capture a
+  // few seconds and report which slot carries samples, then restore the normal
+  // right-slot driver. Capture is stopped first; if it was running it is
+  // restarted afterwards. Never touches the completed recording buffer.
+  bool probeChannels();
+
   bool running() const { return running_; }
   bool ready() const { return installed_; }
   const char* state() const;

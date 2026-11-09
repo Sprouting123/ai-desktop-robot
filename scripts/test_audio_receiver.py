@@ -136,7 +136,7 @@ def main():
     process = subprocess.Popen(
         [sys.executable, str(RECEIVER), "--host", "127.0.0.1",
          "--port", str(port), "--token-file", str(token_file),
-         "--out-dir", str(out_dir), "--header-timeout", "0.5"],
+         "--out-dir", str(out_dir), "--header-timeout", "0.5", "--no-asr"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         ready = wait_for_line(process.stdout, "listening")
