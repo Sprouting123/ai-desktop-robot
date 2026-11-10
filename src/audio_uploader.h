@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-#include "microphone_engine.h"
+#include "record_source.h"
 
 namespace upload {
 
@@ -22,16 +22,23 @@ class Client {
     WifiDown,
   };
 
-  explicit Client(const mic::Engine& mic) : mic_(mic) {}
+  explicit Client() = default;
+  // Optional source used by printStatus() before the first start(), so the
+  // status line keeps reporting the manual microphone recording. start()
+  // still selects the source actually transferred.
+  explicit Client(const audio_record::Source* statusSource)
+      : statusSource_(statusSource) {}
 
   // Copies and validates the receiver settings. Host must be an IPv4 literal;
   // the token is kept in RAM only and is never logged.
   void begin(const char* host, uint16_t port, const char* path,
              const char* token);
 
-  // Starts an upload of the last completed recording. Returns immediately;
-  // the result is reported asynchronously on the serial console.
-  StartResult start();
+  // Starts an upload of one completed recording. The source stays referenced
+  // only until the transfer ends; the caller must not release or overwrite it
+  // while active() is true. Returns immediately; the result is reported
+  // asynchronously on the serial console.
+  StartResult start(const audio_record::Source& source);
   // Stops an active upload and closes the socket. The recording is kept.
   void cancel();
   // Advances at most one small transfer step. Never waits for the network.
@@ -82,7 +89,8 @@ class Client {
   void closeSocket();
   void logStart() const;
 
-  const mic::Engine& mic_;
+  const audio_record::Source* source_ = nullptr;
+  const audio_record::Source* statusSource_ = nullptr;
 
   char host_[kMaxHost + 1] = {};
   char path_[kMaxPath + 1] = {};

@@ -1,0 +1,9 @@
+# 16 MB flash: 4 MB factory app + 4 MB ESP-SR model partition.
+# Model images are written separately at 0x410000; PlatformIO upload does not
+# touch that partition. nvs/otadata keep their default offsets so NVS contents
+# and the bootloader's boot_app0 write at 0xe000 stay valid.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x5000,
+otadata,    data, ota,     0xe000,   0x2000,
+factory,    app,  factory, 0x10000,  0x400000,
+model,      data, spiffs,  0x410000, 0x400000,

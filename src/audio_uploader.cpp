@@ -9,13 +9,13 @@
 namespace upload {
 namespace {
 
-bool responseMatches(const char* response, const mic::Engine& mic) {
+bool responseMatches(const char* response, const audio_record::Source& source) {
   char bytes[32];
   char crc[24];
   std::snprintf(bytes, sizeof(bytes), "bytes=%lu",
-                static_cast<unsigned long>(mic.recordedBytes()));
+                static_cast<unsigned long>(source.bytes()));
   std::snprintf(crc, sizeof(crc), "crc32=%08lx",
-                static_cast<unsigned long>(mic.recordedCrc32()));
+                static_cast<unsigned long>(source.crc32()));
   // The receiver may put other fields between bytes and crc32 (it currently
   // reports frames=...) so match the values separately rather than requiring
   // one fixed contiguous string.
@@ -100,18 +100,18 @@ const char* Client::stateName() const {
   return "unknown";
 }
 
-Client::StartResult Client::start() {
+Client::StartResult Client::start(const audio_record::Source& source) {
   if (active()) return StartResult::Busy;
-  if (mic_.dumpActive()) return StartResult::DumpBusy;
-  if (mic_.recordState() == mic::RecordState::kRecording) {
-    return StartResult::NoRecording;
-  }
-  if (mic_.recordState() != mic::RecordState::kReady) {
+  if (source.dumpActive()) return StartResult::DumpBusy;
+  if (source.captureBusy()) return StartResult::Busy;
+  if (!source.hasRecording() || source.data() == nullptr ||
+      source.bytes() == 0) {
     return StartResult::NoRecording;
   }
   if (!configured_) return StartResult::NotConfigured;
   if (WiFi.status() != WL_CONNECTED) return StartResult::WifiDown;
 
+  source_ = &source;
   sent_ = 0;
   headerSent_ = 0;
   headerLength_ = 0;
@@ -128,18 +128,16 @@ Client::StartResult Client::start() {
 void Client::logStart() const {
   Serial.printf(
       "MIC_UPLOAD_START bytes=%lu crc32=%08lx host=%s port=%u attempts_max=%u\n",
-      static_cast<unsigned long>(mic_.recordedBytes()),
-      static_cast<unsigned long>(mic_.recordedCrc32()), host_,
+      static_cast<unsigned long>(source_->bytes()),
+      static_cast<unsigned long>(source_->crc32()), host_,
       static_cast<unsigned>(port_), static_cast<unsigned>(kMaxAttempts));
 }
 
 bool Client::buildHeader() {
-  const unsigned long bytes = static_cast<unsigned long>(mic_.recordedBytes());
-  const unsigned long frames =
-      static_cast<unsigned long>(mic_.recordedFrames());
-  const unsigned long rate = static_cast<unsigned long>(mic_.sampleRate());
-  const unsigned long crc =
-      static_cast<unsigned long>(mic_.recordedCrc32());
+  const unsigned long bytes = static_cast<unsigned long>(source_->bytes());
+  const unsigned long frames = static_cast<unsigned long>(source_->frames());
+  const unsigned long rate = static_cast<unsigned long>(source_->sampleRate());
+  const unsigned long crc = static_cast<unsigned long>(source_->crc32());
   const int length = std::snprintf(
       header_, sizeof(header_),
       "POST %s HTTP/1.1\r\n"
@@ -230,13 +228,13 @@ void Client::succeed() {
     lastTurn_[length] = '\0';
   }
   Serial.printf("MIC_UPLOAD_DONE bytes=%lu crc32=%08lx attempts=%u turn=%s\n",
-                static_cast<unsigned long>(mic_.recordedBytes()),
-                static_cast<unsigned long>(mic_.recordedCrc32()),
+                static_cast<unsigned long>(source_->bytes()),
+                static_cast<unsigned long>(source_->crc32()),
                 static_cast<unsigned>(attempts_),
                 lastTurn_[0] == '\0' ? "-" : lastTurn_);
   Serial.printf("OK mic=uploaded bytes=%lu crc32=%08lx\n",
-                static_cast<unsigned long>(mic_.recordedBytes()),
-                static_cast<unsigned long>(mic_.recordedCrc32()));
+                static_cast<unsigned long>(source_->bytes()),
+                static_cast<unsigned long>(source_->crc32()));
 }
 
 void Client::evaluateResponse() {
@@ -246,7 +244,7 @@ void Client::evaluateResponse() {
     return;
   }
   const bool statusOk = std::strstr(response_, " 200 ") != nullptr;
-  if (responseMatches(response_, mic_)) {
+  if (responseMatches(response_, *source_)) {
     succeed();
     return;
   }
@@ -273,13 +271,18 @@ void Client::cancel() {
 }
 
 void Client::printStatus() const {
+  const audio_record::Source* source =
+      source_ != nullptr ? source_ : statusSource_;
+  const unsigned long bytes =
+      source == nullptr ? 0UL : static_cast<unsigned long>(source->bytes());
+  const unsigned long crc = source == nullptr
+                                ? 0UL
+                                : static_cast<unsigned long>(source->crc32());
   Serial.printf(
       "UPLOAD state=%s configured=%u bytes=%lu sent=%lu crc32=%08lx "
       "attempts=%u host=%s port=%u\n",
-      stateName(), configured_ ? 1U : 0U,
-      static_cast<unsigned long>(mic_.recordedBytes()),
-      static_cast<unsigned long>(sent_),
-      static_cast<unsigned long>(mic_.recordedCrc32()),
+      stateName(), configured_ ? 1U : 0U, bytes,
+      static_cast<unsigned long>(sent_), crc,
       static_cast<unsigned>(attempts_), host_, static_cast<unsigned>(port_));
 }
 
@@ -346,7 +349,7 @@ void Client::update() {
         scheduleRetry(now, "stall");
         return;
       }
-      const uint32_t total = mic_.recordedBytes();
+      const uint32_t total = source_->bytes();
       if (sent_ >= total) {
         state_ = State::Reading;
         deadlineMs_ = now + kResponseTimeoutMs;
@@ -360,7 +363,7 @@ void Client::update() {
       const uint32_t remaining = total - sent_;
       size_t take = remaining < kChunkBytes ? remaining : kChunkBytes;
       const int written = ::send(
-          fd, reinterpret_cast<const uint8_t*>(mic_.recordedData()) + sent_,
+          fd, reinterpret_cast<const uint8_t*>(source_->data()) + sent_,
           take, MSG_DONTWAIT);
       if (written > 0) {
         sent_ += static_cast<uint32_t>(written);  // Partial writes are normal.

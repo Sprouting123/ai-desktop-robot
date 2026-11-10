@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 
+#include "record_source.h"
+
 namespace mic {
 
 // INMP441 wiring requested for experiment 010. The module is a digital I2S
@@ -44,7 +46,7 @@ constexpr Config kDefaultConfig = {
 // on this port and never touches the speaker engine on I2S_NUM_0. The driver is
 // installed lazily on the first `mic start`, so boot does not clock the
 // microphone or capture anything.
-class Engine {
+class Engine : public audio_record::Source {
  public:
   explicit Engine(const Config& config = kDefaultConfig);
   ~Engine() { end(); }
@@ -67,7 +69,7 @@ class Engine {
   bool startRecording();
   // Begins a non-blocking serial dump of the last completed recording.
   bool startDump();
-  bool dumpActive() const { return dumpActive_; }
+  bool dumpActive() const override { return dumpActive_; }
 
   void printStatus() const;
   void printLevel() const;
@@ -87,7 +89,7 @@ class Engine {
   uint32_t recordedFrames() const { return recordFrames_; }
   uint32_t recordedBytes() const { return recordFrames_ * sizeof(int16_t); }
   uint32_t recordedCrc32() const { return recordCrc_; }
-  uint32_t sampleRate() const { return config_.sampleRate; }
+  uint32_t sampleRate() const override { return config_.sampleRate; }
   // Read-only view of the completed clip; null unless record=ready. The
   // uploader reads it without copying while commands that would overwrite or
   // dump it are rejected.
@@ -96,6 +98,18 @@ class Engine {
                ? reinterpret_cast<const uint8_t*>(recordBuffer_)
                : nullptr;
   }
+
+  // audio_record::Source: the same completed clip seen by the uploader.
+  bool hasRecording() const override {
+    return recordState_ == RecordState::kReady;
+  }
+  bool captureBusy() const override {
+    return recordState_ == RecordState::kRecording || dumpActive_;
+  }
+  const uint8_t* data() const override { return recordedData(); }
+  uint32_t bytes() const override { return recordedBytes(); }
+  uint32_t frames() const override { return recordedFrames(); }
+  uint32_t crc32() const override { return recordedCrc32(); }
 
  private:
   bool install();

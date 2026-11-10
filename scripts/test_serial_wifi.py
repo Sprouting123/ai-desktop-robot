@@ -29,7 +29,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-BOOT = "[experiment 015] Wi-Fi voice reply / Arduino"
+BOOT = "[experiment 016] wake word / Arduino"
 HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | "
         "oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|"
         "sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | "
@@ -44,7 +44,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "mic level | mic probe | mic stop | mic record | mic dump | mic upload | "
         "mic upload status | mic upload cancel | voice status | voice fetch | "
         "voice fetch newest | voice play | voice stop | voice auto on | "
-        "voice auto off; max_line=32; endings=LF/CR/CRLF")
+        "voice auto off | wake status | wake start | wake stop; max_line=32; "
+        "endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -136,6 +137,12 @@ MIC_CONFIG = ("MIC_CONFIG installed=0 port=1 bclk=16 ws=17 din=18 "
 MIC_INIT = ("MIC_INIT ready=1 port=1 bclk=16 ws=17 din=18 rate_hz=16000 "
             "bits_per_slot=32 channel=right")
 MIC_RECORD_ALLOC = "MIC_RECORD_ALLOC bytes=320000 psram=1"
+WAKE_RE = re.compile(
+    r"WAKE state=(running|stopped) model=(\S+) installed=([01]) "
+    r"suppressed=([01]) record=(stopped|idle|arming|recording|ready) "
+    r"record_samples=(\d+) record_crc32=([0-9a-f]{8}) wakes=(\d+) "
+    r"ignored=(\d+) errors=(\d+) feed_frames=(\d+) avg_feed_ms=([\d.]+) "
+    r"max_feed_ms=([\d.]+)")
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
 # serial command window and are not a response to that command.
@@ -143,7 +150,10 @@ ASYNC_PREFIXES = ("WIFI_CONNECTING ", "WIFI_TIMEOUT ", "WIFI_RETRY ",
                   "WIFI_LOST ", "WIFI_CONNECTED ", "WIFI_RECONNECT ",
                   "WIFI_DISABLED ", "WEB_LISTEN ", "WEB_AUTH ",
                   "WEB_REJECT ", "MIC_UPLOAD_", "ERR mic_upload_failed ",
-                  "VOICE_", "ERR voice_failed ")
+                  "VOICE_", "ERR voice_failed ", "WAKE_STAT ",
+                  "WAKE_DETECTED ", "WAKE_IGNORED ", "WAKE_LISTEN ",
+                  "WAKE_RECORD_", "WAKE_SPEECH_", "WAKE_SILENCE_",
+                  "WAKE_UPLOAD_")
 
 
 def load_token(path):
@@ -403,6 +413,18 @@ def main():
         print("  " + lines[0], flush=True)
         return match
 
+    def wake_status(name, state=None, installed=None):
+        lines = [line for line in send(b"wake status\n")
+                 if line.startswith("WAKE ")]
+        match = WAKE_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        if installed is not None:
+            check(f"{name} installed", match.group(3), installed)
+        print("  " + lines[0], flush=True)
+        return match
+
     def web_listening(name, timeout=10.0):
         deadline = time.monotonic() + timeout
         match = web_status(name)
@@ -461,9 +483,12 @@ def main():
         port.rts = True
         time.sleep(0.1)
         port.rts = False
-        startup = collect(2.5)
+        startup = collect(3.5)
         print("STARTUP\n" + startup, flush=True)
-        check("experiment 008 boot identity", BOOT in startup, True)
+        check("experiment 016 boot identity", BOOT in startup, True)
+        check("wake engine auto-starts at boot",
+              "WAKE_AUTO_START model=nihaoxiaozhi half_duplex=1" in startup and
+              "WAKE_READY model=wn9_nihaoxiaozhi_tts" in startup, True)
         check("physical memory configuration",
               "flash=16777216 psram_chip=8388608" in startup and "[warning]" not in startup, True)
         check("boot enters the eye screen",
@@ -650,6 +675,40 @@ def main():
             check("voice playback did not leak heap",
                   int(eyes_status("heap after the voice").group(11)) > 50000,
                   True)
+
+        # --- experiment 016 wake engine ------------------------------------
+        wake_boot = wake_status("wake engine listens after boot", "running", "1")
+        check("wake uses the official WakeNet9 model",
+              wake_boot.group(2), "wn9_nihaoxiaozhi_tts")
+        check("wake starts with no recording",
+              (wake_boot.group(5), wake_boot.group(6)),
+              ("idle", "0"))
+        expect("wake needs a subcommand", b"wake\n",
+               ["ERR wake_usage; use help"])
+        expect("wake rejects unknown subcommands", b"wake lisen\n",
+               ["ERR wake_usage; use help"])
+        already = send(b"wake start\n", 0.3)
+        check("wake start is idempotent while running",
+              "WAKE_ALREADY running=1" in already and
+              "OK wake=started state=idle" in already, True)
+        stopped_lines = send(b"wake stop\n", 2.0)
+        check("wake stop releases the microphone",
+              "WAKE state=stopped" in stopped_lines and
+              "OK wake=stopped" in stopped_lines, True)
+        wake_stopped = wake_status("wake reports stopped", "stopped", "0")
+        check("wake stopped has no active recording",
+              wake_stopped.group(5), "stopped")
+        restart_lines = send(b"wake start\n", 2.0)
+        check("wake can restart after stop",
+              any(line.startswith("WAKE_READY model=wn9_nihaoxiaozhi_tts")
+                  for line in restart_lines) and
+              "OK wake=started state=idle" in restart_lines, True)
+        wake_again = wake_status("restarted wake listens", "running", "1")
+        check("restart keeps the official model", wake_again.group(2),
+              "wn9_nihaoxiaozhi_tts")
+        final_stop = send(b"wake stop\n", 2.0)
+        check("wake stops again before microphone tests",
+              "OK wake=stopped" in final_stop, True)
 
         # --- experiment 010 microphone ------------------------------------
         check("microphone configuration is reported without capture",

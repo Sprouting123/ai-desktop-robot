@@ -15,6 +15,7 @@
 #include "mood_controller.h"
 #include "motion_engine.h"
 #include "servo_controller.h"
+#include "wake_engine.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 
@@ -82,10 +83,13 @@ audio::Engine audioEngine;
 mic::Engine microphoneEngine;
 // Uploads the completed PSRAM recording over Wi-Fi without copying it. It is
 // advanced one small step per loop and only starts on an explicit command.
-upload::Client audioUploader(microphoneEngine);
+upload::Client audioUploader(&microphoneEngine);
 // Downloads the matching TTS reply into PSRAM and replays it through the same
 // AudioEngine. Auto mode only reacts to a completed explicit `mic upload`.
 reply::Client voiceClient(audioEngine, audioUploader);
+// Offline WakeNet detection and VAD recording. It owns I2S_NUM_1 while running,
+// so the manual microphone engine is mutually exclusive with it.
+wake::Engine wakeEngine;
 // Networking only calls the same controllers as the serial commands. It does
 // not own a second copy of expression, motion or servo state.
 wifi::Manager wifiManager;
@@ -133,7 +137,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel | voice status | voice fetch | voice fetch newest | voice play | voice stop | voice auto on | voice auto off; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel | voice status | voice fetch | voice fetch newest | voice play | voice stop | voice auto on | voice auto off | wake status | wake start | wake stop; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -564,6 +568,174 @@ void executeVoice(char* args) {
   Serial.println("ERR voice_usage; use help");
 }
 
+// ---------------------------------------------------------------------------
+// Experiment 016: wake-initiated dialog.
+//
+// The wake engine only reports a finalized VAD clip. This layer starts exactly
+// one upload per clip through the existing upload::Client, then lets the
+// existing voice auto mode fetch and play the reply. While an upload, download
+// or playback is active the wake engine is suppressed (half duplex), so the
+// speaker cannot trigger the microphone.
+// ---------------------------------------------------------------------------
+uint32_t handledWakeReady = 0;
+uint32_t wakeReadyAtMs = 0;
+uint32_t wakeCooldownUntilMs = 0;
+bool wakeUploadPending = false;
+bool wakeWaitLogged = false;
+
+const char* uploadResultName(upload::Client::StartResult result) {
+  switch (result) {
+    case upload::Client::StartResult::Ok: return "ok";
+    case upload::Client::StartResult::Busy: return "busy";
+    case upload::Client::StartResult::NoRecording: return "no_recording";
+    case upload::Client::StartResult::DumpBusy: return "dump_busy";
+    case upload::Client::StartResult::NotConfigured: return "not_configured";
+    case upload::Client::StartResult::WifiDown: return "wifi_down";
+  }
+  return "unknown";
+}
+
+void resetWakeDialogState() {
+  handledWakeReady = 0;
+  wakeReadyAtMs = 0;
+  wakeCooldownUntilMs = 0;
+  wakeUploadPending = false;
+  wakeWaitLogged = false;
+}
+
+bool startWakeEngine() {
+  if (wakeEngine.running()) {
+    Serial.println("WAKE_ALREADY running=1");
+    return true;
+  }
+  if (audioUploader.active()) {
+    Serial.println("ERR wake_upload_busy");
+    return false;
+  }
+  if (microphoneEngine.recordState() == mic::RecordState::kRecording ||
+      microphoneEngine.dumpActive()) {
+    Serial.println("ERR wake_mic_busy");
+    return false;
+  }
+  if (voiceClient.active()) {
+    Serial.println("ERR wake_voice_busy");
+    return false;
+  }
+  if (audioEngine.playing() || voiceClient.playing()) {
+    Serial.println("ERR wake_audio_busy");
+    return false;
+  }
+  // I2S_NUM_1 has one owner. Release the manual driver; a completed manual
+  // recording is discarded, so upload it before starting the wake engine.
+  if (microphoneEngine.ready()) microphoneEngine.end();
+  resetWakeDialogState();
+  return wakeEngine.start();
+}
+
+void finishWakeClip(const char* reason) {
+  Serial.printf("WAKE_UPLOAD_SKIP reason=%s\n", reason);
+  handledWakeReady = wakeEngine.readyCount();
+  wakeEngine.releaseRecording();
+  wakeReadyAtMs = 0;
+  wakeWaitLogged = false;
+}
+
+// Called once per loop after uploader.update() and voiceClient.update().
+void updateWakeDialog() {
+  if (!wakeEngine.running()) return;
+
+  if (wakeUploadPending && !audioUploader.active()) {
+    const bool done = std::strcmp(audioUploader.stateName(), "done") == 0;
+    const char* turn = audioUploader.lastTurn();
+    Serial.printf("WAKE_UPLOAD_RESULT state=%s turn=%s\n",
+                  audioUploader.stateName(),
+                  (done && turn[0] != '\0') ? turn : "-");
+    wakeUploadPending = false;
+    handledWakeReady = wakeEngine.readyCount();
+    wakeEngine.releaseRecording();
+    wakeReadyAtMs = 0;
+    wakeWaitLogged = false;
+    wakeCooldownUntilMs = millis() + 800;
+  }
+
+  if (wakeEngine.readyCount() == handledWakeReady) return;
+  if (wakeUploadPending) return;
+  if (audioUploader.active() || voiceClient.active()) return;
+  if (!wakeEngine.hasRecording()) {
+    handledWakeReady = wakeEngine.readyCount();
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (wakeReadyAtMs == 0) wakeReadyAtMs = now == 0 ? 1 : now;
+  if (!audioUploader.configured()) {
+    finishWakeClip("not_configured");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (now - wakeReadyAtMs >= 10000) {
+      finishWakeClip("wifi_timeout");
+      return;
+    }
+    if (!wakeWaitLogged) {
+      wakeWaitLogged = true;
+      Serial.println("WAKE_UPLOAD_WAIT reason=wifi");
+    }
+    return;
+  }
+
+  const upload::Client::StartResult result = audioUploader.start(wakeEngine);
+  if (result == upload::Client::StartResult::Ok) {
+    wakeUploadPending = true;
+    Serial.printf("WAKE_UPLOAD_START bytes=%lu frames=%lu crc32=%08lx\n",
+                  static_cast<unsigned long>(wakeEngine.bytes()),
+                  static_cast<unsigned long>(wakeEngine.frames()),
+                  static_cast<unsigned long>(wakeEngine.crc32()));
+  } else {
+    finishWakeClip(uploadResultName(result));
+  }
+}
+
+void updateWakeSuppression() {
+  const bool busy = audioUploader.active() || wakeUploadPending ||
+                    voiceClient.active() || voiceClient.playing() ||
+                    audioEngine.playing();
+  const uint32_t now = millis();
+  if (busy) wakeCooldownUntilMs = now + 1200;
+  const bool cooldown =
+      static_cast<int32_t>(wakeCooldownUntilMs - now) > 0;
+  wakeEngine.setSuppressed(busy || cooldown);
+}
+
+void executeWake(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR wake_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    wakeEngine.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "start") == 0) {
+    if (!startWakeEngine()) {
+      Serial.println("ERR wake_start_failed");
+      return;
+    }
+    Serial.printf("OK wake=started state=%s\n", wakeEngine.stateName());
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    if (audioUploader.active() || wakeUploadPending) {
+      Serial.println("ERR wake_upload_busy");
+      return;
+    }
+    wakeEngine.stop();
+    Serial.println("OK wake=stopped");
+    return;
+  }
+  Serial.println("ERR wake_usage; use help");
+}
+
 // Audio commands only control local playback (the test tone or the embedded
 // voice clip). They never trigger a motion, expression or network action, and
 // playback is never started at boot.
@@ -623,6 +795,15 @@ void executeAudio(char* args) {
   Serial.println("ERR audio_usage; use help");
 }
 
+// The wake engine owns I2S_NUM_1 while it runs. Commands that would install or
+// capture with the manual microphone driver must stop it first; status, dump
+// and upload of an existing clip stay available.
+bool rejectMicWhileWake() {
+  if (!wakeEngine.running()) return false;
+  Serial.println("ERR mic_wake_active; run wake stop first");
+  return true;
+}
+
 // Microphone commands only control local capture. They never record to flash,
 // save a file, upload data or start a network action, and capture is off at
 // boot. `mic level` reads the rolling window statistics; it never blocks.
@@ -640,6 +821,7 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "probe") == 0) {
+    if (rejectMicWhileWake()) return;
     if (audioUploader.active()) {
       Serial.println("ERR mic_upload_busy");
       return;
@@ -660,6 +842,7 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "start") == 0) {
+    if (rejectMicWhileWake()) return;
     if (audioUploader.active()) {
       Serial.println("ERR mic_upload_busy");
       return;
@@ -692,6 +875,7 @@ void executeMic(char* args) {
     return;
   }
   if (std::strcmp(args, "record") == 0) {
+    if (rejectMicWhileWake()) return;
     if (audioUploader.active()) {
       Serial.println("ERR mic_upload_busy");
       return;
@@ -761,7 +945,7 @@ void executeMic(char* args) {
       Serial.println("ERR mic_dump_busy");
       return;
     }
-    switch (audioUploader.start()) {
+    switch (audioUploader.start(microphoneEngine)) {
       case upload::Client::StartResult::Ok:
         return;
       case upload::Client::StartResult::Busy:
@@ -851,6 +1035,11 @@ void executeCommand() {
     char* args = text + 5;
     while (isPadding(*args)) ++args;
     executeVoice(args);
+  } else if (std::strncmp(text, "wake", 4) == 0 &&
+             (text[4] == '\0' || isPadding(text[4]))) {
+    char* args = text + 4;
+    while (isPadding(*args)) ++args;
+    executeWake(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -931,7 +1120,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 015] Wi-Fi voice reply / Arduino");
+  Serial.println("\n[experiment 016] wake word / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -956,6 +1145,9 @@ void setup() {
   // Report the microphone plan without installing the RX driver: capture stays
   // off and the INMP441 sees no clocks until an explicit `mic start`.
   microphoneEngine.begin();
+  // The wake engine reports its plan only; I2S and ESP-SR start after the
+  // local subsystems have been initialized.
+  wakeEngine.begin();
   // Copy and validate the optional receiver settings. Nothing connects and no
   // audio moves until an explicit `mic upload`; the token is never logged.
   audioUploader.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_PATH,
@@ -974,6 +1166,13 @@ void setup() {
   webServer.begin(API_TOKEN);
   wifiManager.printStatus();
   webServer.printStatus();
+  // Formal firmware behavior: start listening at boot. If the model partition
+  // is missing, the engine reports the reason and every other subsystem keeps
+  // working; `wake start` can retry later.
+  Serial.println("WAKE_AUTO_START model=nihaoxiaozhi half_duplex=1");
+  if (!wakeEngine.start()) {
+    Serial.println("WAKE_START_FAILED reason=auto; local functions continue");
+  }
 }
 
 void loop() {
@@ -993,6 +1192,12 @@ void loop() {
   // One small reply-download step per loop. Auto mode observes the uploader's
   // success counter; playback still goes through AudioEngine below.
   voiceClient.update();
+  // Wake-initiated dialog: one automatic upload per finalized VAD clip, then
+  // the existing voice auto mode fetches and plays the answer.
+  updateWakeDialog();
+  // Half duplex: no new wake word while uploading, downloading, playing, or
+  // during the short echo cooldown after playback.
+  updateWakeSuppression();
   // Audio streams one small chunk per loop and never waits for the DMA queue.
   audioEngine.update();
   // One non-blocking RX read per loop; capture only runs after `mic start`.
