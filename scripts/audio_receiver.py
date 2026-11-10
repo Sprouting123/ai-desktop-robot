@@ -44,13 +44,16 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import wave
 import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import tts_client
 from llm_client import (ChatSession, DeepSeekProvider, LLMConfig, LLMError,
                         load_api_key, valid_user_text, DEFAULT_BASE_URL,
                         DEFAULT_KEY_FILE, DEFAULT_MAX_TOKENS, DEFAULT_MODEL)
+from reply_store import ReplyError, ReplyStore
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -62,6 +65,10 @@ DEFAULT_ASR_DIR = "work/asr"
 DEFAULT_ASR_PYTHON = "work/asr-venv/bin/python"
 DEFAULT_ASR_SCRIPT = "scripts/asr_local.py"
 DEFAULT_SESSION_DIR = "work/sessions"
+DEFAULT_REPLY_DIR = "work/replies"
+DEFAULT_TTS_DIR = "work/tts"
+DEFAULT_TTS_KEY_FILE = "work/dashscope_api_key"
+TURN_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 CRC_RE = re.compile(r"[0-9a-fA-F]{8}")
 FORMAT_HEADERS = {
     "Content-Type": "application/octet-stream",
@@ -178,9 +185,11 @@ class AsrPipeline:
     slow API answer never delays the ESP32.
     """
 
-    def __init__(self, config, chat=None):
+    def __init__(self, config, chat=None, tts=None, replies=None):
         self.config = config
         self.chat = chat
+        self.tts = tts
+        self.replies = replies
         self.root = pathlib.Path(__file__).resolve().parent.parent
         self.queue = queue.Queue(maxsize=config.queue_max)
         self.worker = None
@@ -203,7 +212,8 @@ class AsrPipeline:
         return True
 
     def process_existing(self, path):
-        job = {"name": path.name, "path": path}
+        job = {"name": path.name, "path": path,
+               "turn": time.strftime("%Y%m%d-%H%M%S") + "-offline"}
         try:
             return self._process(job)
         except Exception as exc:  # keep the same failure contract as the worker
@@ -328,7 +338,7 @@ class AsrPipeline:
             print(f"[asr] text={record['text']}", flush=True)
             print(f"[asr] inference_ms={record['inference_ms']} "
                   f"status=success file={name}", flush=True)
-            self._chat(name, record["text"], path)
+            self._chat(name, record["text"], path, job.get("turn"))
             return "success"
 
         if payload and payload.get("status") == "error":
@@ -343,7 +353,7 @@ class AsrPipeline:
         print(f"[asr] status=error reason={reason} file={name}", flush=True)
         return "error"
 
-    def _chat(self, name, text, path):
+    def _chat(self, name, text, path, turn=None):
         if self.chat is None:
             return
         if not valid_user_text(text):
@@ -367,9 +377,53 @@ class AsrPipeline:
                   f"cost_usd={cost_text} "
                   f"session={record['session_id']} turn={record['turn']}",
                   flush=True)
+            self._tts(name, record["reply_text"], turn)
         else:
             print(f"[chat] status=error reason={record['reason']} "
                   f"file={name}", flush=True)
+
+    def _tts(self, name, text, turn):
+        """Synthesize the reply and publish it for the ESP32 downloader."""
+        if self.tts is None or self.replies is None:
+            return
+        if not TURN_RE.fullmatch(turn or ""):
+            print(f"[tts] skipped file={name} reason=no_turn", flush=True)
+            return
+        try:
+            result = tts_client.synthesize(text, self.tts)
+        except tts_client.TTSError as exc:
+            print(f"[tts] status=error reason={exc.reason} file={name}",
+                  flush=True)
+            return
+        record = result.record
+        try:
+            wav_bytes = pathlib.Path(record["wav_path"]).read_bytes()
+            stored = self.replies.publish(
+                turn, result.pcm, text, {
+                    "provider": record["provider"],
+                    "model": record["model"],
+                    "voice": record["voice"],
+                    "characters": record["characters"],
+                    "latency_ms": record["latency_ms"],
+                    "total_ms": record["total_ms"],
+                    "cost_cny": record["cost_cny"],
+                    "request_id": record.get("request_id"),
+                    "record_file": record["record_file"],
+                }, wav_bytes=wav_bytes)
+        except (OSError, ReplyError) as exc:
+            reason = getattr(exc, "reason", f"write_failed")
+            print(f"[tts] status=error reason={reason} file={name}",
+                  flush=True)
+            return
+        cost = stored["tts"].get("cost_cny")
+        cost_text = "unknown" if cost is None else f"{cost:.6f}"
+        print(f"[tts] status=success id={stored['id']} "
+              f"provider={stored['tts']['provider']} "
+              f"chars={stored['tts']['characters']} "
+              f"latency_ms={stored['tts']['latency_ms']} "
+              f"audio_ms={stored['duration_ms']} "
+              f"pcm_bytes={stored['pcm_bytes']} "
+              f"cost_cny={cost_text} file={stored['pcm']}", flush=True)
 
     def _record_skip(self, job, reason):
         name = job.get("name", "?")
@@ -446,13 +500,14 @@ class Receiver(HTTPServer):
     daemon_threads = True
 
     def __init__(self, address, token, out_dir, max_uploads, header_timeout,
-                 asr):
+                 asr, replies=None):
         super().__init__(address, Handler)
         self.token = token
         self.out_dir = pathlib.Path(out_dir)
         self.max_uploads = max_uploads
         self.header_timeout = header_timeout
         self.asr = asr
+        self.replies = replies
         self.uploads = 0
 
 
@@ -490,12 +545,71 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def do_GET(self):
-        if self.path == "/health":
+        path, _, query = self.path.partition("?")
+        if path == "/health":
             self._reply(200, "OK")
-        elif self.path == "/upload":
+        elif path == "/reply/latest":
+            self._serve_reply(query)
+        elif path == "/upload":
             self._reply(405, "ERR method_not_allowed")
         else:
             self._reply(404, "ERR not_found")
+
+    def _serve_reply(self, query):
+        """Download the latest reply, optionally pinned to one upload turn."""
+        token = self.headers.get("X-Auth-Token", "")
+        if not token:
+            self._log("reject missing_token reply")
+            self._reply(401, "ERR missing_token")
+            return
+        if not hmac.compare_digest(token, self.server.token):
+            self._log(f"reject invalid_token reply "
+                      f"remote={self.client_address[0]}")
+            self._reply(403, "ERR invalid_token")
+            return
+        if self.server.replies is None:
+            self._reply(404, "ERR no_reply")
+            return
+
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        turns = params.get("turn")
+        turn = turns[0] if turns else None
+        if turn is not None and not TURN_RE.fullmatch(turn):
+            self._log("reject bad_turn")
+            self._reply(400, "ERR bad_turn")
+            return
+
+        meta = self.server.replies.get(turn)
+        if meta is None:
+            self._reply(404, "ERR no_reply")
+            return
+        try:
+            data = meta["pcm_path"].read_bytes()
+        except OSError:
+            self._log(f"reply_read_failed id={meta['id']}")
+            self._reply(500, "ERR read_failed")
+            return
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Audio-Format", "s16le")
+            self.send_header("X-Sample-Rate", str(meta["sample_rate"]))
+            self.send_header("X-Channels", str(meta["channels"]))
+            self.send_header("X-Frames", str(meta["frames"]))
+            self.send_header("X-Crc32", f"{crc:08x}")
+            self.send_header("X-Reply-Id", meta["id"])
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            self.close_connection = True
+        self._log(f"reply id={meta['id']} bytes={len(data)} "
+                  f"crc32={crc:08x}")
 
     def do_POST(self):
         if self.path != "/upload":
@@ -570,15 +684,18 @@ class Handler(BaseHTTPRequestHandler):
         # Enqueue before replying so --once cannot shut down between the
         # response and the job hand-off. Recognition runs on the worker; the
         # reply itself never waits for the model.
+        turn_id = time.strftime("%Y%m%d-%H%M%S") + \
+            f"-{self.server.uploads:02d}"
         if self.server.asr is not None:
             self.server.asr.submit({
                 "name": name,
                 "path": self.server.out_dir / name,
                 "crc": f"{crc:08x}",
+                "turn": turn_id,
             })
 
         self._reply(200, f"OK bytes={length} frames={FRAMES} crc32={crc:08x} "
-                         f"file={name}")
+                         f"file={name} turn={turn_id}")
         if (self.server.max_uploads
                 and self.server.uploads >= self.server.max_uploads):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -672,6 +789,48 @@ def build_chat(args):
     return chat
 
 
+def build_tts(args):
+    """Return a validated TTSConfig, or None with a visible reason."""
+    if args.no_tts or args.tts_provider == "none":
+        return None
+    try:
+        config = tts_client.TTSConfig(
+            provider=args.tts_provider,
+            voice=args.tts_voice,
+            model=args.tts_model,
+            base_url=args.tts_base_url,
+            key_file=args.tts_key_file,
+            edge_python=args.tts_edge_python,
+            edge_rate=args.tts_edge_rate,
+            out_dir=args.tts_out_dir,
+            connect_timeout=args.tts_connect_timeout,
+            read_timeout=args.tts_read_timeout,
+            max_chars=args.tts_max_chars,
+        )
+        config.validate()
+        if config.provider == "edge":
+            if "/" in config.edge_python and not pathlib.Path(
+                    config.edge_python).is_file():
+                raise tts_client.TTSError(
+                    "edge_unavailable", f"missing {config.edge_python}")
+            print(f"[tts] enabled provider=edge voice={config.voice} "
+                  f"rate={config.edge_rate} max_chars={config.max_chars}",
+                  flush=True)
+        else:
+            key_info = tts_client.load_api_key(config.key_file)
+            if key_info.loose_permissions:
+                print(f"[tts] warning key_source={key_info.source} is readable "
+                      f"by group/others", flush=True)
+            print(f"[tts] enabled provider=cosyvoice model={config.model} "
+                  f"voice={config.voice} max_chars={config.max_chars} "
+                  f"key_source={key_info.source}", flush=True)
+        return config
+    except tts_client.TTSError as exc:
+        print(f"[tts] disabled reason={exc.reason} detail={exc.message}",
+              flush=True)
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Receive a 10 s PCM upload, save a WAV, then run local ASR "
@@ -742,6 +901,40 @@ def main():
                              "(default: 4000)")
     parser.add_argument("--llm-session-dir", default=DEFAULT_SESSION_DIR,
                         help=f"chat turn records (default: {DEFAULT_SESSION_DIR})")
+    parser.add_argument("--no-tts", action="store_true",
+                        help="do not synthesize replies (no reply download)")
+    parser.add_argument("--tts-provider", choices=("edge", "cosyvoice", "none"),
+                        default="edge",
+                        help="speech provider (default: edge; cosyvoice needs "
+                             "a DashScope key)")
+    parser.add_argument("--tts-voice", default=None,
+                        help="voice name; provider default when omitted")
+    parser.add_argument("--tts-model", default=tts_client.DEFAULT_COSY_MODEL,
+                        help=f"CosyVoice model (default: "
+                             f"{tts_client.DEFAULT_COSY_MODEL})")
+    parser.add_argument("--tts-base-url", default=tts_client.DEFAULT_COSY_BASE_URL,
+                        help="CosyVoice HTTP endpoint")
+    parser.add_argument("--tts-key-file", default=DEFAULT_TTS_KEY_FILE,
+                        help=f"ignored DashScope key file (default: "
+                             f"{DEFAULT_TTS_KEY_FILE})")
+    parser.add_argument("--tts-edge-python", default=tts_client.DEFAULT_EDGE_PYTHON,
+                        help=f"Edge TTS virtualenv Python (default: "
+                             f"{tts_client.DEFAULT_EDGE_PYTHON})")
+    parser.add_argument("--tts-edge-rate", default=tts_client.DEFAULT_EDGE_RATE,
+                        help=f"Edge TTS rate (default: "
+                             f"{tts_client.DEFAULT_EDGE_RATE})")
+    parser.add_argument("--tts-connect-timeout", type=float, default=5.0,
+                        help="TTS connect timeout in seconds (default: 5)")
+    parser.add_argument("--tts-read-timeout", type=float, default=30.0,
+                        help="TTS read timeout in seconds (default: 30)")
+    parser.add_argument("--tts-max-chars", type=int, default=300,
+                        help="maximum characters sent to TTS (default: 300)")
+    parser.add_argument("--tts-out-dir", default=DEFAULT_TTS_DIR,
+                        help=f"TTS PCM/WAV/JSON output (default: "
+                             f"{DEFAULT_TTS_DIR})")
+    parser.add_argument("--reply-dir", default=DEFAULT_REPLY_DIR,
+                        help=f"downloadable replies (default: "
+                             f"{DEFAULT_REPLY_DIR})")
     parser.add_argument("--process-wav", type=pathlib.Path,
                         help="run the ASR pipeline on an existing WAV and exit "
                              "(offline test, no HTTP server)")
@@ -759,14 +952,20 @@ def main():
         parser.error("--llm-history-turns must not be negative")
     if args.llm_max_context_chars < 100:
         parser.error("--llm-max-context-chars must be at least 100")
+    if not 1 <= args.tts_max_chars <= 1000:
+        parser.error("--tts-max-chars must be between 1 and 1000")
+    if args.tts_connect_timeout <= 0 or args.tts_read_timeout <= 0:
+        parser.error("TTS timeouts must be positive")
     asr_config = parse_asr_config(args, parser)
     chat = build_chat(args)
+    tts_config = build_tts(args)
+    replies = ReplyStore(args.reply_dir)
 
     if args.process_wav is not None:
         path = args.process_wav
         if not path.is_file():
             raise SystemExit(f"WAV not found: {path}")
-        pipeline = AsrPipeline(asr_config, chat)
+        pipeline = AsrPipeline(asr_config, chat, tts_config, replies)
         status = pipeline.process_existing(path)
         print(f"[asr] stopped success={pipeline.counts['success']} "
               f"error={pipeline.counts['error']} "
@@ -778,20 +977,21 @@ def main():
 
     asr = None
     if not args.no_asr:
-        asr = AsrPipeline(asr_config, chat)
+        asr = AsrPipeline(asr_config, chat, tts_config, replies)
         asr.start()
     elif chat is not None:
         print("[llm] disabled reason=asr_off", flush=True)
         chat = None
 
     server = Receiver((args.host, args.port), token, args.out_dir, max_uploads,
-                      args.header_timeout, asr)
+                      args.header_timeout, asr, replies)
     print(f"[receiver] listening host={args.host} port={args.port} "
           f"out={args.out_dir} max_uploads={max_uploads or 'unlimited'} "
           f"asr={'off' if asr is None else 'on'} "
           f"queue={0 if asr is None else asr_config.queue_max} "
-          f"llm={'off' if chat is None else 'on'}; "
-          f"trusted LAN only", flush=True)
+          f"llm={'off' if chat is None else 'on'} "
+          f"tts={'off' if tts_config is None else tts_config.provider} "
+          f"replies={args.reply_dir}; trusted LAN only", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

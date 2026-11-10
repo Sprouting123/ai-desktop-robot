@@ -210,10 +210,30 @@ void Client::failFinal(const char* reason) {
 void Client::succeed() {
   closeSocket();
   state_ = State::Done;
-  Serial.printf("MIC_UPLOAD_DONE bytes=%lu crc32=%08lx attempts=%u\n",
+  ++successCount_;
+  // The receiver appends turn=<id> to its 200 response. Only accept the
+  // documented ID characters so the value can be placed in a URL later.
+  lastTurn_[0] = '\0';
+  const char* turn = std::strstr(response_, "turn=");
+  if (turn != nullptr) {
+    turn += 5;
+    size_t length = 0;
+    while (length < sizeof(lastTurn_) - 1) {
+      const char ch = turn[length];
+      const bool valid = (ch >= '0' && ch <= '9') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= 'A' && ch <= 'Z') || ch == '_' || ch == '-';
+      if (!valid) break;
+      lastTurn_[length] = ch;
+      ++length;
+    }
+    lastTurn_[length] = '\0';
+  }
+  Serial.printf("MIC_UPLOAD_DONE bytes=%lu crc32=%08lx attempts=%u turn=%s\n",
                 static_cast<unsigned long>(mic_.recordedBytes()),
                 static_cast<unsigned long>(mic_.recordedCrc32()),
-                static_cast<unsigned>(attempts_));
+                static_cast<unsigned>(attempts_),
+                lastTurn_[0] == '\0' ? "-" : lastTurn_);
   Serial.printf("OK mic=uploaded bytes=%lu crc32=%08lx\n",
                 static_cast<unsigned long>(mic_.recordedBytes()),
                 static_cast<unsigned long>(mic_.recordedCrc32()));
@@ -365,11 +385,10 @@ void Client::update() {
       if (received) {
         response_[responseLength_] = '\0';
         deadlineMs_ = now + kResponseTimeoutMs;
-        // Success is recognisable before the server closes the connection.
-        if (responseMatches(response_, mic_)) {
-          succeed();
-          return;
-        }
+        // Do not succeed on a partial response: the receiver appends the turn
+        // ID after bytes/crc32, and the voice downloader waits for exactly
+        // that turn. The server sends Connection: close, so waiting for the
+        // close costs no extra round trip.
       }
       if (!client_.connected()) {
         evaluateResponse();

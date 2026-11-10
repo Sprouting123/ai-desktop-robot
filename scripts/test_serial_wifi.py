@@ -29,7 +29,7 @@ import serial
 from serial.tools import list_ports
 
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5D4D001473-if00"
-BOOT = "[experiment 013] Wi-Fi audio upload / Arduino"
+BOOT = "[experiment 015] Wi-Fi voice reply / Arduino"
 HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | "
         "oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|"
         "sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | "
@@ -41,9 +41,10 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "mood happy | mood sad | mood angry | mood normal | mood status | "
         "mood stop | wifi status | wifi reconnect | web status | audio beep | "
         "audio hello | audio stop | audio status | mic status | mic start | "
-        "mic level | mic stop | mic record | mic dump | mic upload | "
-        "mic upload status | mic upload cancel; max_line=32; "
-        "endings=LF/CR/CRLF")
+        "mic level | mic probe | mic stop | mic record | mic dump | mic upload | "
+        "mic upload status | mic upload cancel | voice status | voice fetch | "
+        "voice fetch newest | voice play | voice stop | voice auto on | "
+        "voice auto off; max_line=32; endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
 UNKNOWN = "ERR unknown_command; use help"
@@ -123,6 +124,12 @@ MIC_LEVEL_RE = re.compile(
 UPLOAD_RE = re.compile(
     r"UPLOAD state=(\w+) configured=([01]) bytes=(\d+) sent=(\d+) "
     r"crc32=([0-9a-f]{8}) attempts=(\d+) host=([^ ]*) port=(\d+)")
+VOICE_RE = re.compile(
+    r"VOICE state=(idle|connecting|sending|header|body|wait|done|failed) "
+    r"auto=([01]) configured=([01]) has_clip=([01]) id=(\S+) bytes=(\d+) "
+    r"frames=(\d+) duration_ms=(\d+) crc32=([0-9a-f]{8}) playing=([01]) "
+    r"polling=([01]) fetches=(\d+) plays=(\d+) failures=(\d+) "
+    r"host=([^ ]*) port=(\d+)")
 MIC_CONFIG = ("MIC_CONFIG installed=0 port=1 bclk=16 ws=17 din=18 "
               "sample_rate_hz=16000 bits_per_slot=32 channel=right "
               "dma=4 x 256 frames")
@@ -135,7 +142,8 @@ TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 ASYNC_PREFIXES = ("WIFI_CONNECTING ", "WIFI_TIMEOUT ", "WIFI_RETRY ",
                   "WIFI_LOST ", "WIFI_CONNECTED ", "WIFI_RECONNECT ",
                   "WIFI_DISABLED ", "WEB_LISTEN ", "WEB_AUTH ",
-                  "WEB_REJECT ", "MIC_UPLOAD_", "ERR mic_upload_failed ")
+                  "WEB_REJECT ", "MIC_UPLOAD_", "ERR mic_upload_failed ",
+                  "VOICE_", "ERR voice_failed ")
 
 
 def load_token(path):
@@ -366,6 +374,20 @@ def main():
         check(name, match is not None, True)
         if state is not None:
             check(f"{name} state", match.group(1), state)
+        print("  " + lines[0], flush=True)
+        return match
+
+    def voice_status(name, state=None, auto=None, has_clip=None):
+        lines = [line for line in send(b"voice status\n")
+                 if line.startswith("VOICE ")]
+        match = VOICE_RE.fullmatch(lines[0]) if len(lines) == 1 else None
+        check(name, match is not None, True)
+        if state is not None:
+            check(f"{name} state", match.group(1), state)
+        if auto is not None:
+            check(f"{name} auto", match.group(2), auto)
+        if has_clip is not None:
+            check(f"{name} has_clip", match.group(4), has_clip)
         print("  " + lines[0], flush=True)
         return match
 
@@ -714,11 +736,35 @@ def main():
         # --- experiment 010 phase 2: record, dump and checksum ------------
         expect("mic upload needs a completed recording", b"mic upload\n",
                ["ERR mic_no_recording"])
-        upload_status("upload is idle before a recording", "idle")
+        upload_idle = upload_status("upload is idle before a recording",
+                                    "idle")
         expect("mic upload cancel is safe while idle", b"mic upload cancel\n",
                ["OK upload=idle"])
         expect("mic upload rejects unknown subcommands", b"mic upload now\n",
                ["ERR mic_usage; use help"])
+        voice_idle = voice_status("voice is idle with no downloaded clip",
+                                  "idle", auto="1", has_clip="0")
+        check("voice reuses the upload receiver host and port",
+              (voice_idle.group(15), voice_idle.group(16)),
+              (upload_idle.group(7), upload_idle.group(8)))
+        check("voice is configured from the same token as upload",
+              voice_idle.group(3), "1")
+        expect("voice play needs a downloaded clip", b"voice play\n",
+               ["ERR voice_no_clip"])
+        expect("voice stop is safe while idle", b"voice stop\n",
+               ["OK voice=stopped download=0 playback=0"])
+        expect("voice auto can be disabled", b"voice auto off\n",
+               ["OK voice=auto enabled=0"])
+        voice_status("voice reports auto off", "idle", auto="0")
+        expect("voice auto can be enabled", b"voice auto on\n",
+               ["OK voice=auto enabled=1"])
+        voice_status("voice reports auto on", "idle", auto="1")
+        expect("voice auto requires on or off", b"voice auto now\n",
+               ["ERR voice_usage; use help"])
+        expect("voice rejects unknown subcommands", b"voice now\n",
+               ["ERR voice_usage; use help"])
+        expect("voice fetch rejects extra arguments", b"voice fetch now\n",
+               ["ERR voice_usage; use help"])
         expect("mic dump needs a recording", b"mic dump\n",
                ["ERR mic_no_recording"])
         expect("mic record starts a fixed 10 second capture", b"mic record\n",

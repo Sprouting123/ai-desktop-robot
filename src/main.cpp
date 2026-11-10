@@ -9,6 +9,7 @@
 #include "audio_engine.h"
 #include "audio_uploader.h"
 #include "voice_clips.h"
+#include "voice_receiver.h"
 #include "eyes_engine.h"
 #include "microphone_engine.h"
 #include "mood_controller.h"
@@ -82,6 +83,9 @@ mic::Engine microphoneEngine;
 // Uploads the completed PSRAM recording over Wi-Fi without copying it. It is
 // advanced one small step per loop and only starts on an explicit command.
 upload::Client audioUploader(microphoneEngine);
+// Downloads the matching TTS reply into PSRAM and replays it through the same
+// AudioEngine. Auto mode only reacts to a completed explicit `mic upload`.
+reply::Client voiceClient(audioEngine, audioUploader);
 // Networking only calls the same controllers as the serial commands. It does
 // not own a second copy of expression, motion or servo state.
 wifi::Manager wifiManager;
@@ -129,7 +133,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel | voice status | voice fetch | voice fetch newest | voice play | voice stop | voice auto on | voice auto off; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -486,6 +490,80 @@ void executeWeb(char* args) {
   Serial.println("ERR web_usage; use help");
 }
 
+// Voice commands download the reply for the last upload turn and play it via
+// the existing I2S path. They never start a recording or an upload.
+void executeVoice(char* args) {
+  if (*args == '\0') {
+    Serial.println("ERR voice_usage; use help");
+    return;
+  }
+  if (std::strcmp(args, "status") == 0) {
+    voiceClient.printStatus();
+    return;
+  }
+  if (std::strcmp(args, "fetch") == 0 ||
+      std::strcmp(args, "fetch newest") == 0) {
+    const bool newest = std::strcmp(args, "fetch newest") == 0;
+    const reply::Client::StartResult result =
+        newest ? voiceClient.fetchNewest() : voiceClient.fetchLatest();
+    switch (result) {
+      case reply::Client::StartResult::Ok:
+        Serial.printf("OK voice=fetching mode=%s\n",
+                      newest ? "newest" : "latest");
+        return;
+      case reply::Client::StartResult::Busy:
+        Serial.println("ERR voice_busy");
+        return;
+      case reply::Client::StartResult::NotConfigured:
+        Serial.println("ERR voice_not_configured");
+        return;
+      case reply::Client::StartResult::WifiDown:
+        Serial.println("ERR voice_wifi");
+        return;
+      case reply::Client::StartResult::NoTurn:
+        Serial.println("ERR voice_bad_turn");
+        return;
+    }
+    return;
+  }
+  if (std::strcmp(args, "play") == 0) {
+    if (!voiceClient.hasClip()) {
+      Serial.println("ERR voice_no_clip");
+      return;
+    }
+    if (!voiceClient.play()) {
+      Serial.println("ERR voice_play_failed");
+      return;
+    }
+    return;
+  }
+  if (std::strcmp(args, "stop") == 0) {
+    const bool wasDownload = voiceClient.active();
+    const bool wasPlaying = voiceClient.playing();
+    voiceClient.cancel();
+    if (wasPlaying) audioEngine.stop();
+    Serial.printf("OK voice=stopped download=%u playback=%u\n",
+                  wasDownload ? 1U : 0U, wasPlaying ? 1U : 0U);
+    return;
+  }
+  if (std::strncmp(args, "auto", 4) == 0 &&
+      (args[4] == '\0' || args[4] == ' ' || args[4] == '\t')) {
+    char* action = args + 4;
+    while (*action == ' ' || *action == '\t') ++action;
+    if (std::strcmp(action, "on") == 0) {
+      voiceClient.setAuto(true);
+      Serial.println("OK voice=auto enabled=1");
+      return;
+    }
+    if (std::strcmp(action, "off") == 0) {
+      voiceClient.setAuto(false);
+      Serial.println("OK voice=auto enabled=0");
+      return;
+    }
+  }
+  Serial.println("ERR voice_usage; use help");
+}
+
 // Audio commands only control local playback (the test tone or the embedded
 // voice clip). They never trigger a motion, expression or network action, and
 // playback is never started at boot.
@@ -768,6 +846,11 @@ void executeCommand() {
     char* args = text + 3;
     while (isPadding(*args)) ++args;
     executeMic(args);
+  } else if (std::strncmp(text, "voice", 5) == 0 &&
+             (text[5] == '\0' || isPadding(text[5]))) {
+    char* args = text + 5;
+    while (isPadding(*args)) ++args;
+    executeVoice(args);
   } else if (std::strncmp(text, "servo1", 6) == 0 &&
              (text[6] == '\0' || isPadding(text[6]))) {
     char* args = text + 6;
@@ -848,7 +931,7 @@ void setup() {
   led.clear();
   led.show();
 #endif
-  Serial.println("\n[experiment 013] Wi-Fi audio upload / Arduino");
+  Serial.println("\n[experiment 015] Wi-Fi voice reply / Arduino");
   i2cReady = Wire.begin(kI2cSda, kI2cScl, kI2cFrequency);
   Wire.setTimeOut(kI2cTimeoutMs);
   Serial.printf("I2C_INIT ready=%u sda=%d scl=%d frequency_hz=%lu timeout_ms=%u\n",
@@ -877,6 +960,10 @@ void setup() {
   // audio moves until an explicit `mic upload`; the token is never logged.
   audioUploader.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_PATH,
                       AUDIO_UPLOAD_TOKEN);
+  // The reply download reuses the receiver host, port and token; only the
+  // path differs (/reply/latest). Auto playback is on, but it starts only
+  // after an explicit upload succeeds.
+  voiceClient.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_TOKEN);
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -903,6 +990,9 @@ void loop() {
   // One small upload step per loop: no wait for the socket, and the completed
   // PSRAM recording is read in place.
   audioUploader.update();
+  // One small reply-download step per loop. Auto mode observes the uploader's
+  // success counter; playback still goes through AudioEngine below.
+  voiceClient.update();
   // Audio streams one small chunk per loop and never waits for the DMA queue.
   audioEngine.update();
   // One non-blocking RX read per loop; capture only runs after `mic start`.

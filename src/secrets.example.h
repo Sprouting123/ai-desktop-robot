@@ -16,10 +16,13 @@
 #define WIFI_PASSWORD "your-wifi-password"
 #define API_TOKEN "replace-with-a-32-character-random-hex-token"
 
-// Optional experiment 013 audio upload receiver on the trusted home LAN.
+// Optional experiment 013/015 audio receiver on the trusted home LAN.
 // AUDIO_UPLOAD_HOST must be an IPv4 literal (no hostname lookup). Use a
 // separate token from API_TOKEN; generate it with `openssl rand -hex 16`.
-// Leave AUDIO_UPLOAD_HOST empty to disable `mic upload`.
+// Leave AUDIO_UPLOAD_HOST empty to disable `mic upload` and `voice fetch`.
+// Experiment 015 reuses HOST/PORT/TOKEN to download TTS replies from
+// GET /reply/latest. The TTS API key stays on the Ubuntu host and is never
+// compiled into the firmware.
 #define AUDIO_UPLOAD_HOST "192.168.1.10"
 #define AUDIO_UPLOAD_PORT 8080
 #define AUDIO_UPLOAD_PATH "/upload"

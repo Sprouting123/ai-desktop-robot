@@ -42,6 +42,12 @@ class Client {
   const char* stateName() const;
   void printStatus() const;
 
+  // Number of successful uploads since boot and the turn ID reported by the
+  // receiver. The voice downloader uses these to wait for exactly this turn's
+  // reply instead of accidentally replaying an older one.
+  uint32_t successCount() const { return successCount_; }
+  const char* lastTurn() const { return lastTurn_; }
+
   static constexpr size_t kMaxToken = 64;
 
  private:
@@ -63,7 +69,7 @@ class Client {
   static constexpr uint32_t kRetryDelayMs = 1000;
   static constexpr size_t kChunkBytes = 1024;
   static constexpr size_t kHeaderBytes = 512;
-  static constexpr size_t kResponseBytes = 256;
+  static constexpr size_t kResponseBytes = 512;
   static constexpr size_t kMaxHost = 63;
   static constexpr size_t kMaxPath = 47;
 
@@ -97,6 +103,8 @@ class Client {
   char response_[kResponseBytes] = {};
   size_t responseLength_ = 0;
   char reason_[24] = {};
+  uint32_t successCount_ = 0;
+  char lastTurn_[41] = {};
 };
 
 }  // namespace upload
