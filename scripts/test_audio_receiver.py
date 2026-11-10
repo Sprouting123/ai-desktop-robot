@@ -25,8 +25,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECEIVER = ROOT / "scripts" / "audio_receiver.py"
 FRAMES = 160000
 BYTES = FRAMES * 2
+EXPECTED_OVERSIZE = BYTES + 2
 PAYLOAD = bytes(range(256)) * (BYTES // 256)
 PAYLOAD_CRC = f"{zlib.crc32(PAYLOAD) & 0xFFFFFFFF:08x}"
+# 实验 016 第三阶段：变长录音，1 秒样本（16,000 帧 / 32,000 字节）。
+SHORT_FRAMES = 16000
+SHORT_PAYLOAD = bytes(range(256)) * (SHORT_FRAMES * 2 // 256)
+SHORT_CRC = f"{zlib.crc32(SHORT_PAYLOAD) & 0xFFFFFFFF:08x}"
 
 failures = 0
 checks = 0
@@ -57,7 +62,7 @@ def base_headers(token, payload=PAYLOAD, **overrides):
         "X-Audio-Format": "s16le",
         "X-Sample-Rate": "16000",
         "X-Channels": "1",
-        "X-Frames": str(FRAMES),
+        "X-Frames": str(len(payload) // 2),
         "X-Crc32": f"{zlib.crc32(payload) & 0xFFFFFFFF:08x}",
         "Content-Length": str(len(payload)),
         "Connection": "close",
@@ -176,8 +181,27 @@ def main():
                             base_headers(token, **{
                                 "Content-Length": str(BYTES - 1)}),
                             PAYLOAD[:-1])
-        check("wrong length -> 400", status, 400)
-        check("no WAV after wrong length", len(wav_files(out_dir)), 0)
+        check("odd length -> 400", status, 400)
+        check("no WAV after odd length", len(wav_files(out_dir)), 0)
+
+        status, _ = request(port, "POST", "/upload",
+                            base_headers(token, payload=PAYLOAD[:15998]),
+                            PAYLOAD[:15998])
+        check("below minimum length -> 400", status, 400)
+        check("no WAV after short payload", len(wav_files(out_dir)), 0)
+
+        too_long = bytes(EXPECTED_OVERSIZE)
+        status, _ = request(port, "POST", "/upload",
+                            base_headers(token, payload=too_long), too_long)
+        check("oversize upload -> 413", status, 413)
+        check("no WAV after oversize", len(wav_files(out_dir)), 0)
+
+        status, _ = request(port, "POST", "/upload",
+                            base_headers(token, payload=SHORT_PAYLOAD,
+                                         **{"X-Frames": str(SHORT_FRAMES + 1)}),
+                            SHORT_PAYLOAD)
+        check("frames header mismatch -> 400", status, 400)
+        check("no WAV after frames mismatch", len(wav_files(out_dir)), 0)
 
         status, _ = request(port, "POST", "/upload",
                             base_headers(token, **{"X-Sample-Rate": "8000"}),
@@ -215,17 +239,48 @@ def main():
                                PAYLOAD)
         check("valid upload -> 200", status, 200)
         check("response reports bytes", f"bytes={BYTES}" in body, True)
+        check("response reports frames", f"frames={FRAMES}" in body, True)
         check("response reports crc32", PAYLOAD_CRC in body, True)
 
+        print("variable-length happy path (1 s)")
+        status, body = request(port, "POST", "/upload",
+                               base_headers(token, payload=SHORT_PAYLOAD),
+                               SHORT_PAYLOAD)
+        check("short upload -> 200", status, 200)
+        check("short response bytes",
+              f"bytes={len(SHORT_PAYLOAD)}" in body, True)
+        check("short response frames", f"frames={SHORT_FRAMES}" in body, True)
+        check("short response crc32", SHORT_CRC in body, True)
+
         files = wav_files(out_dir)
-        check("exactly one WAV", len(files), 1)
+        check("exactly two WAVs", len(files), 2)
+        short_wavs = []
         if files:
-            with wave.open(str(files[0]), "rb") as wav:
+            for path in files:
+                with wave.open(str(path), "rb") as wav:
+                    if wav.getnframes() == SHORT_FRAMES:
+                        short_wavs.append(wav.readframes(SHORT_FRAMES))
+        check("short WAV frames present", len(short_wavs), 1)
+        if short_wavs:
+            check("short WAV byte count", len(short_wavs[0]),
+                  len(SHORT_PAYLOAD))
+            check("short WAV payload identical",
+                  hashlib.sha256(short_wavs[0]).hexdigest(),
+                  hashlib.sha256(SHORT_PAYLOAD).hexdigest())
+
+        print("10 s reference WAV")
+        long_saved = []
+        for path in files:
+            with wave.open(str(path), "rb") as wav:
+                if wav.getnframes() != FRAMES:
+                    continue
                 check("WAV channels", wav.getnchannels(), 1)
                 check("WAV sample width", wav.getsampwidth(), 2)
                 check("WAV sample rate", wav.getframerate(), 16000)
-                check("WAV frames", wav.getnframes(), FRAMES)
-                saved = wav.readframes(FRAMES)
+                long_saved.append(wav.readframes(FRAMES))
+        check("10 s WAV present", len(long_saved), 1)
+        if long_saved:
+            saved = long_saved[0]
             check("WAV byte count", len(saved), BYTES)
             check("WAV payload identical", hashlib.sha256(saved).hexdigest(),
                   hashlib.sha256(PAYLOAD).hexdigest())

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Receive one ESP32 PCM upload over the trusted LAN, save it, then run ASR.
 
-The ESP32 runs experiment 013 and sends a binary POST only after an explicit
-`mic upload` command. This server validates the token, length, format headers
-and CRC-32 before writing anything, so a rejected request never leaves a WAV
-and never starts recognition.
+The ESP32 (experiment 013 firmware or the experiment 016 wake-word probe)
+sends a binary POST. Recordings are variable length: 0.5-10 s of 16 kHz mono
+s16le (16,000-320,000 bytes), so the old fixed 320,000-byte upload still fits.
+This server validates the token, length, format headers, X-Frames and CRC-32
+before writing anything, so a rejected request never leaves a WAV and never
+starts recognition.
 
 After a valid WAV is written, a single background worker runs the existing
 `scripts/asr_local.py --json` in a subprocess (one model at a time) and stores
@@ -57,8 +59,9 @@ from reply_store import ReplyError, ReplyStore
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
-FRAMES = 160000
+FRAMES = 160000          # 实验 012/015 的固定 10 秒上限
 EXPECTED_BYTES = FRAMES * 2
+MIN_UPLOAD_BYTES = 16000  # 实验 016 第三阶段：变长录音下限 0.5 秒
 DEFAULT_TOKEN_FILE = "work/audio_upload_token"
 DEFAULT_OUT_DIR = "work/audio"
 DEFAULT_ASR_DIR = "work/asr"
@@ -75,7 +78,6 @@ FORMAT_HEADERS = {
     "X-Audio-Format": "s16le",
     "X-Sample-Rate": str(SAMPLE_RATE),
     "X-Channels": str(CHANNELS),
-    "X-Frames": str(FRAMES),
 }
 
 # Baseline silence gate. Formal VAD is left for a later experiment; these
@@ -633,8 +635,11 @@ class Handler(BaseHTTPRequestHandler):
             self._log("reject bad_length")
             self._reply(400, "ERR bad_length")
             return
-        if length != EXPECTED_BYTES:
-            self._log(f"reject length={length} expected={EXPECTED_BYTES}")
+        # 变长录音：0.5–10 秒、偶数字节；实验 012/015 的 320,000 字节仍在上限内。
+        if (length % 2 != 0 or length < MIN_UPLOAD_BYTES
+                or length > EXPECTED_BYTES):
+            self._log(f"reject length={length} allowed="
+                      f"{MIN_UPLOAD_BYTES}..{EXPECTED_BYTES}")
             self._reply(413 if length > EXPECTED_BYTES else 400,
                         "ERR bad_length")
             return
@@ -645,6 +650,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._log(f"reject header={name} value={actual!r}")
                 self._reply(400, "ERR bad_format")
                 return
+
+        frames_text = (self.headers.get("X-Frames") or "").strip()
+        if frames_text != str(length // 2):
+            self._log(f"reject frames={frames_text} expected={length // 2}")
+            self._reply(400, "ERR bad_format")
+            return
 
         crc_text = (self.headers.get("X-Crc32") or "").strip()
         if not CRC_RE.fullmatch(crc_text):
@@ -694,8 +705,8 @@ class Handler(BaseHTTPRequestHandler):
                 "turn": turn_id,
             })
 
-        self._reply(200, f"OK bytes={length} frames={FRAMES} crc32={crc:08x} "
-                         f"file={name} turn={turn_id}")
+        self._reply(200, f"OK bytes={length} frames={length // 2} "
+                         f"crc32={crc:08x} file={name} turn={turn_id}")
         if (self.server.max_uploads
                 and self.server.uploads >= self.server.max_uploads):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
