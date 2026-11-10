@@ -1,11 +1,12 @@
 # 实验 016：离线唤醒词与免按键语音交互
 
-状态：第一、二阶段已验收；第三阶段探针实测通过（2026-11-10）。官方词
-“你好小智”命中；探针内已完成“唤醒 → OLED 提示 → VAD 变长录音（0.6–10 秒、
-0.5 秒预录）→ 上传 → ASR → DeepSeek → Edge TTS → 取回 → 播放”，并验证
-无语音超时、连续说话、10 秒截断与变长上传协议。主工程固件未改动，实验
-001–015 的功能与验收结论保持不变；“小桌小桌”仍未实现，主工程集成
-（Arduino + ESP-SR）尚未开始。
+状态：第一、二阶段已验收；第三阶段探针实测通过（2026-11-10）；第四阶段
+完成源码归档与两种整合路线的最小构建验证（2026-11-10，见 6.9），推荐路线 A，
+**尚未改动主固件**，等待用户确认后开始正式整合。官方词“你好小智”命中；探针内
+已完成“唤醒 → OLED 提示 → VAD 变长录音（0.6–10 秒、0.5 秒预录）→ 上传 →
+ASR → DeepSeek → Edge TTS → 取回 → 播放”，并验证无语音超时、连续说话、
+10 秒截断与变长上传协议。实验 001–015 的功能与验收结论保持不变；“小桌小桌”
+仍未实现。
 
 ## 1. 目标
 
@@ -474,6 +475,117 @@ WAKE_DETECTED → REC_ARMING（OLED LISTEN）
 - 后续影响：以后在探针与主固件之间切换后若出现画面偏移，先做整板断电
   重启再排查固件；这条经验已写入 `AGENTS.md`。
 
+### 6.9 第四阶段：源码归档与整合架构验证（2026-11-10）
+
+本阶段只做两件事：把探针源码整理进可版本管理的目录，并用最小工程分别验证
+“Arduino 主工程 + ESP-SR”（路线 A）与“ESP-IDF 探针 + 主工程功能”（路线 B）
+的构建代价。**没有修改主固件，没有烧录任何新固件。**
+
+#### 6.9.1 探针源码归档
+
+归档目录为 `experiments/016-wake-probe/`，内容：
+
+| 路径 | 内容 |
+| --- | --- |
+| `src/` | `main.c`、`recorder.*`、`net.*`、`speaker.*`、`oled.*`、`probe_secrets.example.h` |
+| `platformio.ini`、`partitions.csv`、`sdkconfig.defaults`、`CMakeLists.txt` | 构建配置与 16 MB Flash 分区 |
+| `scripts/serial_capture.py` | 串口采集小工具 |
+| `README.md` | 版本、来源、许可、三处 PlatformIO 兼容处理与构建/烧录步骤 |
+| `.gitignore` | 忽略 `probe_secrets.h`、第三方组件、构建产物 |
+
+- 第三方组件（ESP-SR 1.9.2、esp-dsp 1.4.4、u8g2 2.36.17）与模型镜像**不入库**，
+  README 给出固定版本、来源和许可；本机复现时把组件放到
+  `experiments/016-wake-probe/components/`（当前为指向 `work/` 的符号链接，
+  已被 Git 忽略）。
+- 真实 Wi-Fi 密码与上传令牌只存在于被忽略的 `probe_secrets.h`；归档模板只有
+  占位符。
+- 归档目录独立构建通过：`firmware.bin` 949,525 字节、静态 RAM 71,180 字节
+  （21.7%），耗时 20.24 s。构建日志在 `work/route-archive-build.log`（未入库）。
+
+#### 6.9.2 路线 A：Arduino 主工程 + ESP-SR
+
+依据：Arduino-ESP32 2.0.17 内核使用 ESP-IDF 4.4.7，与探针和 ESP-SR 1.9.2
+要求的 IDF 版本一致，预编译静态库在 ABI 上应当兼容。
+
+验证分两级，均只构建、不烧录：
+
+1. **最小链接测试**（`work/route-a-arduino/`）：Arduino 工程调用
+   `esp_srmodel_init("model")`、`esp_srmodel_filter()` 与 `esp_afe_sr_v1`，
+   加入 AFE 配置头与 ESP-SR 静态库。结果 **SUCCESS**：Flash 501,853 字节
+   （12.0%）、静态 RAM 28,860 字节（8.8%）。
+2. **完整主固件链接测试**（`work/route-a-main-test/`）：复制实验 015 的全部
+   `src/` 与 `assets/`，只增加 `ROUTE_A_LINK_TEST` 条件编译和一个启动时调用，
+   使用 4 MB `factory` + 4 MB `model` 分区。结果 **SUCCESS**：Flash 1,157,477
+   字节（27.6%）、静态 RAM 67,276 字节（20.5%），耗时 9.51 s。
+
+编译中确认的适配点（正式整合时仍需保留）：
+
+- 需要把 ESP-SR 的 `model_path.c`、`esp_process_sdkconfig.c`、
+  `esp_mn_speech_commands.c` 编进 Arduino 工程，否则 `libwakenet.a` 缺
+  `get_model_base_path` / `get_static_srmodels`。
+- `AFE_CONFIG_DEFAULT()` 使用 C99 指定初始化，不能直接写在 `.cpp` 里；用一个
+  极小的 C 文件返回 `afe_config_t`，并在其中显式包含 `sdkconfig.h`、
+  `stdbool.h`、`stddef.h`。
+- Arduino 构建不读取探针的 `sdkconfig.defaults`，ESP-SR 相关开关目前靠
+  `build_flags` 的 `-DCONFIG_*` 补齐；正式整合需要核对这些宏与运行期模型的
+  一致性。
+
+#### 6.9.3 路线 B：ESP-IDF 探针 + 主工程功能
+
+现状：探针已经在纯 ESP-IDF 4.4.7 下跑通唤醒、VAD 录音、上传、下载、播放与
+SH1106 状态提示；OLED 状态、SH1106/SSD1306 切换、串口状态查询、Wi-Fi
+重连、Web 服务器、舵机与音频引擎仍需从主工程移植或重写。
+
+最小可移植性验证（`work/route-b-idf/`）：在 IDF 工程内直接编译主工程的
+`eyes_state.cpp`、`motion_engine.cpp`、`servo_controller.cpp`，配一个约 40 行的
+Arduino 兼容层（`millis()`、`ledcSetup/ledcAttachPin/ledcWrite`、
+`Serial.printf`）。结果 **SUCCESS**：Flash 203,185 字节（4.8%）、静态 RAM
+11,776 字节（3.6%）。这只证明这三个模块的**语法与链接**可过，兼容层不模拟
+真实 LEDC 时序，不能证明移植后的运动行为一致。
+
+其余模块的依赖情况：
+
+| 模块 | 行数 | 依赖 | 路线 B 需要的改动 |
+| --- | --- | --- | --- |
+| `eyes_state.*` | 118 | 无（仅 `<cstdint>`） | 可直接复用 |
+| `motion_engine.*`、`mood_controller.*` | 378 | Arduino `millis()`、`Serial`、`eyes::Engine` | 小改或兼容层；mood 还依赖 U8g2 类型 |
+| `servo_controller.*` | 243 | Arduino LEDC | 写 IDF LEDC 适配或保留兼容层 |
+| `eyes_render.*`、`eyes_engine.*` | 352 | `U8g2lib.h`（Arduino 封装） | 改用 U8g2 C 接口，重写初始化和 I²C 回调 |
+| `wifi_manager.*`、`web_server.*`、`web_ui.h` | 1,281 | Arduino `WiFi`/`WiFiServer` | 改用 esp_wifi/esp_netif/lwIP，整个 HTTP 服务器重写 |
+| `audio_uploader.*`、`voice_receiver.*` | 1,239 | Arduino `WiFiClient` | 改用 BSD socket 或 esp_http_client |
+| `audio_engine.*`、`microphone_engine.*` | 1,080 | Arduino `Serial`、ESP-IDF legacy I²S | 逻辑可复用，接口需改写 |
+| `main.cpp` 命令解析 | 1,010 | Arduino `Serial`、全部模块 | 大部分可保留，但需逐条回归 |
+| 主要模块合计 | 5,701（`src/` 全部 5,969） | 29 个文件中 16 个直接包含 Arduino/WiFi/U8g2 头 | 重写面大，回归范围覆盖实验 002–015 |
+
+#### 6.9.4 路线对比与建议
+
+| 维度 | 路线 A：Arduino + ESP-SR | 路线 B：IDF + 移植主工程 |
+| --- | --- | --- |
+| 编译兼容 | 已验证完整主固件可链接（1,157,477 字节） | 已验证纯逻辑模块可编译；OLED/Web/网络需重写 |
+| RAM / PSRAM | 静态 RAM 67,276 字节；AFE 运行期另占内部 RAM/PSRAM，探针实测约 374 KB PSRAM，主工程余量待实测 | 架构相同，但需重新接所有缓冲；PSRAM 余量相近 |
+| 任务调度 | 现有 `loop()` 与新增 AFE feed/fetch 任务共存；探针已证明 feed 与 fetch 必须分任务、播放需 `g_busy` 半双工 | 探针已跑通同样的任务划分，但要把 OLED/舵机/Web 全部搬进任务模型 |
+| 维护成本 | 保留实验 002–015 全部已验证代码，新增一层 ESP-SR 适配 | 两套代码长期并存或整体迁移，文档、测试、回归都要重做 |
+| 回归风险 | 中：分区表变化、sdkconfig 宏、任务抢占与内存是主要风险 | 高：Web、Wi-Fi、上传/下载、OLED、舵机全部重写后再回归 |
+| Flash 分区 | 必须改为 4 MB `factory` + 4 MB `model`；首次烧录会重建 NVS | 相同 |
+| 现有验收 | 现有 1,217 项串口/HTTP 回归可直接复用并扩展 | 现有回归脚本大量依赖串口与 Arduino 行为，需重写 |
+
+**建议选择路线 A。** 理由：完整主固件已经能在 Arduino 2.0.17 下链接 ESP-SR，
+现有实验 002–015 的代码、串口命令和 1,217 项回归可以继续使用；路线 B 需要
+重写 Web、Wi-Fi 客户端、OLED 与音频接口，回归面覆盖整个主工程，风险明显更高。
+路线 A 的代价是分区表变更（NVS 重建）、ESP-SR 宏需要从探针的 `sdkconfig` 手动
+对齐，以及运行期任务/内存仍需实测。
+
+正式整合前仍需验证（本阶段均未做）：
+
+- 烧录后 `esp_srmodel_init("model")` 在 Arduino 构建下能否真正挂载模型分区；
+  Arduino 不读取 `sdkconfig.defaults`，`CONFIG_MODEL_IN_FLASH` 等宏是否足够。
+- AFE 在 Arduino `loop()` 之外单独建任务时的栈、优先级与看门狗配置。
+- 运行期内部 RAM/PSRAM 余量、CPU 占用，以及 OLED 刷新、舵机步进、Web 请求
+  在唤醒/录音/播放期间是否被饿死。
+- 半双工播放屏蔽（`g_busy`）在现有 `AudioEngine` 上的接入点。
+- 模型分区与主固件分开烧录的流程，以及首次烧录后 NVS/Wi-Fi 凭据是否需要
+  重新配置。
+
 ## 7. 未验证与风险
 
 - 唤醒率、误唤醒率、有效距离、噪声环境、多人环境与长时间运行均未做
@@ -485,8 +597,15 @@ WAKE_DETECTED → REC_ARMING（OLED LISTEN）
   32 B 运行，与 ESP-SR 官方建议（64 KB / 64 B）不一致，性能余量未优化。
   单独启用 64 B cache line 是否可行未验证。
 - 未验证“小桌小桌”的任何模型；定制费用、语料与周期需与 Espressif 商谈。
-- 探针使用纯 ESP-IDF，与主工程的 Arduino 运行环境不同；即使探针成功，
-  也不能直接推断主工程集成成本为零。
+- 探针使用纯 ESP-IDF，与主工程的 Arduino 运行环境不同；6.9 已证明完整主固件
+  能链接 ESP-SR，但**没有烧录运行**，运行期模型挂载、任务调度与内存竞争仍未
+  验证；64 KB data cache 复位、Flash 分区变更导致 NVS 重建也未处理。
+- 路线 A 的构建使用 4 MB `factory` + 4 MB `model` 分区；`model` 分区必须单独
+  烧录，PlatformIO 的 `upload` 不会写它。首次改为该分区表后，NVS 中的 Wi-Fi
+  凭据和既有配置会丢失，需重新写入。
+- 路线 B 的最小验证只覆盖 `eyes_state`/`motion_engine`/`servo_controller` 三个
+  模块，Arduino 兼容层不模拟真实 LEDC；Web、Wi-Fi 客户端、OLED 与音频接口的
+  移植代价未通过构建验证，表中行数为静态估算。
 - 模型分区占 4 MB（95% 被模型镜像占满），加入多唤醒词或自定义词会进一步
   增大 Flash 占用，需要重新规划分区。
 
@@ -510,9 +629,16 @@ WAKE_DETECTED → REC_ARMING（OLED LISTEN）
 8. ~~在探针内实现 VAD 起点/终点、预录缓冲、0.6–10 秒变长录音与变长上传，
    并保持对实验 015 的兼容。~~（2026-11-10 已完成：五种场景实测、44 项接收端
    测试通过；见 6.7。）
-9. 评估把 ESP-SR、唤醒词、VAD 变长录音集成进 Arduino 主工程的可行方案与
-   内存/任务冲突（OLED 表情、双舵机、Web、音频播放）。
-10. 唤醒鲁棒性：噪声、距离、播放后残余回声、长时间空闲误报，以及
+9. ~~评估把 ESP-SR、唤醒词、VAD 变长录音集成进 Arduino 主工程的可行方案与
+   内存/任务冲突（OLED 表情、双舵机、Web、音频播放）。~~（2026-11-10 完成
+   源码归档与路线 A/B 最小构建验证，推荐路线 A；见 6.9。尚未烧录运行，等待
+   用户确认后开始正式整合。）
+10. **正式整合（待用户确认路线 A 后开始）：** 先把 ESP-SR、模型分区与一个
+   最小唤醒检测任务加入实验 015 主固件，烧录并实测内部 RAM/PSRAM/CPU 与
+   OLED、舵机、Web 并行；再接入 VAD 变长录音、上传与回答播放，播放期间用
+   半双工忙标志屏蔽唤醒；最后做多轮连续对话与实物验收。每一步单独记录，
+   未观察到的行为不标记完成。
+11. 唤醒鲁棒性：噪声、距离、播放后残余回声、长时间空闲误报，以及
     `g_busy` 之外是否需要 AEC。
-11. “小桌小桌”模型：向 Espressif 咨询定制流程（语料、费用、周期），或评估
+12. “小桌小桌”模型：向 Espressif 咨询定制流程（语料、费用、周期），或评估
     自训练可行性与授权；未确定前不改主固件。

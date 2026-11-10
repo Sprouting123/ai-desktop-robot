@@ -1,0 +1,8 @@
+# 实验 016 探针分区表（16 MB flash）
+# nvs 之后的 phy_init 保持 IDF 常见布局；factory 4 MB；model 4 MB 供 ESP-SR 模型镜像。
+# ESP-SR 1.9.2 的 movemodel.py 打包后约 3.9 MB（推荐 3902K），故 model 分区取 4 MB。
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x400000,
+model,      data, spiffs,  0x410000, 0x400000,

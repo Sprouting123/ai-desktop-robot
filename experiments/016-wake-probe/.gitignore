@@ -1,0 +1,18 @@
+# 本地凭据：由 probe_secrets.example.h 复制，绝不入库
+src/probe_secrets.h
+
+# 第三方组件：按 README 自行下载，不随仓库分发
+components/esp-sr
+components/espressif__esp-dsp
+components/u8g2
+
+# PlatformIO / ESP-IDF 构建产物与生成配置
+.pio/
+sdkconfig
+sdkconfig.old
+sdkconfig.wake_probe
+sdkconfig.wake_probe.*
+dependencies.lock
+*.bin
+*.elf
+*.map
