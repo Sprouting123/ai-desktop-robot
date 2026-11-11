@@ -6,6 +6,7 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 
 - [协作规则](AGENTS.md)：工作流程、硬件约束、当前串口接口与 Git 同步规则。
 - [当前进度与交接](docs/progress.md)：里程碑、验证证据、未决问题和下一步。
+- [实验 017：云端 AI 服务部署](docs/experiments/017-cloud-ai-deployment.md)：AI 链路迁移到阿里云轻量应用服务器（Ubuntu 22.04、2 核、约 1.6 GB 可用内存、公网 `47.97.65.217`），用 sherpa-onnx 2.0.1 + SenseVoiceSmall int8（229 MB、峰值 RSS 约 372 MB）替代本地 Paraformer，上传协议、`turn`、CRC-32、异步识别和回答下载逻辑保持不变；新增同音字纠错（小卓/捉宠）、每 IP 10 次/分与每日 200 次上传限额（状态文件损坏 fail-closed）、每日清理定时器、`Restart=always` 与 1200M 内存上限的 systemd 服务；nginx 在 443 终止 TLS 1.2/1.3，只代理 `/health`、`/upload`、`/reply/latest`，8080 不暴露公网。固件用 `setCACert` 固定自签 ECDSA CA（不使用 `setInsecure`），SAN 同时含 `DNS:<IP>` 与 `IP:<IP>`，并在 Wi-Fi 后 SNTP 校时。三环境构建、烧录 1,304,352 字节、完整串口回归 **1240 项通过**，公网 HTTPS 上传（320,000 字节、CRC `9a625788`）与下载（208,280 字节、CRC `e3327c0a`）已实测；错误令牌与服务器不可达的超时场景也已验证。2026-11-11 的唤醒体验修正（唤醒即蓝闪 + 眨眼、等待窗口 10 秒、回答后免唤醒追问最多 3 轮）已通过三环境构建、烧录与 1242 项回归，并由用户实测一次唤醒连续 4 轮对话后自动结束，确认符合设计。最终“关电脑后台对话”验收待执行。
 - [实验 016：离线唤醒词与免按键语音交互](docs/experiments/016-voice-wakeup.md)：ESP-SR 1.9.2（AFE v1 + WakeNet9）官方中文词“你好小智”已正式集成进 Arduino 主固件，完成“唤醒 → VAD 变长录音（0.6–10 秒）→ Wi-Fi 上传 → ASR → DeepSeek → Edge TTS → 取回播放”的免按键闭环；播放期间用半双工忙标志屏蔽唤醒。三环境构建、烧录 1,166,864 字节、**1237 项回归**通过；2026-11-11 用户完成三轮实物对话，确认回答清楚，播放中说唤醒词被 `WAKE_IGNORED reason=half_duplex` 忽略，播放结束后恢复；OLED、双舵机、Web/Mood 与内嵌语音均正常。探针源码归档在 [`experiments/016-wake-probe/`](experiments/016-wake-probe/)，第三方组件、模型镜像与构建产物不入库；“小桌小桌”自定义词仍未实现。
 - [实验 015：AI 语音回复（TTS 与 ESP32 无线播放）](docs/experiments/015-ai-voice-reply.md)：主机侧 `scripts/tts_client.py` 支持 Edge TTS（默认，免费非官方）与阿里云 CosyVoice 官方接口，统一输出 16kHz/16bit/单声道 PCM；回答原子存入 `work/replies/`，接收端新增带令牌的 `GET /reply/latest?turn=`，上传响应带回 `turn=`；ESP32 新增 `voice fetch/play/stop/auto`，PSRAM 缓冲、CRC 校验并复用 `AudioEngine`。主机测试 68+43+30 项、三环境构建、烧录 931,392 字节与 1217 项回归通过；实机下载 218,896 字节且 CRC 一致。2026-11-10 用户接通外部 5V 后确认扬声器播放清楚、播放中 `voice stop` 立即停止，并完成一次本人讲话触发的 ASR → DeepSeek → Edge TTS → ESP32 自动播放闭环，第一、二阶段均记为已验收；CosyVoice 对比由用户决定跳过，Edge 为当前方案。
 - [实验 014：DeepSeek API 文本对话与 ASR 衔接](docs/experiments/014-deepseek-api.md)：不再使用 Ollama/本地 Qwen，改为主机调用 DeepSeek 官方 OpenAI 兼容接口（默认 `deepseek-flash`、非思考模式）；独立 `scripts/llm_client.py`、有限多轮上下文、Key 只在本机、记录延迟/Token/估算费用；接收端在 ASR 成功后调用并在终端显示问答，静音或 ASR 失败不调用。本地模拟测试 78+76+30 项通过；2026-11-09 用户授权的一次真实文本调用成功（HTTP 200、延迟 839.4 ms、103 Token、估算 USD 0.000024）；随后端到端录音→上传→ASR→DeepSeek 跑通（上传 `attempts=1`、CRC 一致、HTTP 200、延迟 649.6 ms、109 Token、估算 USD 0.000025），识别文本经用户确认语义一致，第一、二阶段已验收。
@@ -23,7 +24,7 @@ AI 桌宠机器人：ESP32-S3 通过 Wi-Fi 连接云端 AI，逐步实现表情�
 - [实验 002：串口命令控制 RGB](docs/experiments/002-serial-led.md)：已验收的 RGB 命令基线、串口测试及 VS Code 操作步骤。
 - [实验 001：RGB 自动循环](docs/experiments/001-rgb-led.md)：已归档的首次实验，记录保持不变。
 
-## 当前功能：离线唤醒词“你好小智”与免按键语音对话（已验收）、AI 语音回复（TTS + Wi-Fi 下载播放）、DeepSeek 文本对话（主机侧）、Wi-Fi 无线音频上传、I²S 提示音与中文语音、INMP441 麦克风采集与 10 秒 WAV 录音、本地中文语音识别（ASR）、Wi-Fi 局域网控制、OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
+## 当前功能：云端 AI 服务（实验 017，进行中；服务器部署与 HTTPS 已完成，关电脑验收待执行）、离线唤醒词“你好小智”、唤醒蓝闪反馈与免唤醒追问、免按键语音对话（已验收）、AI 语音回复（TTS + Wi-Fi 下载播放）、DeepSeek 文本对话（主机侧）、Wi-Fi 无线音频上传、I²S 提示音与中文语音、INMP441 麦克风采集与 10 秒 WAV 录音、本地中文语音识别（ASR）、Wi-Fi 局域网控制、OLED 表情、双 SG90 动作序列与表情联动、串口控制 RGB、I²C 扫描与 OLED 测试
 
 Ubuntu + VS Code / PlatformIO + Arduino；ESP32-S3、16 MB Flash、8 MB PSRAM、GPIO48 均已验证。默认环境 `rgb_gpio48`。
 

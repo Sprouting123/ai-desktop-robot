@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 
 #include "record_source.h"
 
@@ -30,9 +31,12 @@ class Client {
       : statusSource_(statusSource) {}
 
   // Copies and validates the receiver settings. Host must be an IPv4 literal;
-  // the token is kept in RAM only and is never logged.
+  // the token is kept in RAM only and is never logged. A non-empty caCert
+  // switches to HTTPS with certificate verification against that pinned CA;
+  // the hostname verified is host_ (the certificate must contain it as an IP
+  // SAN). An empty/NULL caCert keeps plain HTTP for a trusted LAN.
   void begin(const char* host, uint16_t port, const char* path,
-             const char* token);
+             const char* token, const char* caCert = nullptr);
 
   // Starts an upload of one completed recording. The source stays referenced
   // only until the transfer ends; the caller must not release or overwrite it
@@ -71,6 +75,10 @@ class Client {
 
   static constexpr uint8_t kMaxAttempts = 3;
   static constexpr uint32_t kConnectTimeoutMs = 1000;
+  // TLS needs a few round trips and an ECDSA verification on the ESP32; the
+  // handshake itself is blocking, so keep this as short as still reliable.
+  static constexpr uint32_t kTlsConnectTimeoutMs = 4000;
+  static constexpr uint32_t kTlsWriteTimeoutMs = 1000;
   static constexpr uint32_t kStallTimeoutMs = 5000;
   static constexpr uint32_t kResponseTimeoutMs = 5000;
   static constexpr uint32_t kRetryDelayMs = 1000;
@@ -88,6 +96,7 @@ class Client {
   void evaluateResponse();
   void closeSocket();
   void logStart() const;
+  int transportWrite(const uint8_t* data, size_t length);
 
   const audio_record::Source* source_ = nullptr;
   const audio_record::Source* statusSource_ = nullptr;
@@ -98,9 +107,13 @@ class Client {
   uint16_t port_ = 0;
   IPAddress address_;
   bool configured_ = false;
+  bool https_ = false;
 
   State state_ = State::Idle;
-  WiFiClient client_;
+  WiFiClient plainClient_;
+  WiFiClientSecure secureClient_;
+  WiFiClient* client_ = &plainClient_;
+  const char* caCert_ = nullptr;
   char header_[kHeaderBytes] = {};
   size_t headerLength_ = 0;
   size_t headerSent_ = 0;

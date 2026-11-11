@@ -35,6 +35,7 @@ import argparse
 import array
 import datetime
 import hmac
+import ipaddress
 import json
 import math
 import os
@@ -57,6 +58,9 @@ from llm_client import (ChatSession, DeepSeekProvider, LLMConfig, LLMError,
                         DEFAULT_KEY_FILE, DEFAULT_MAX_TOKENS, DEFAULT_MODEL)
 from reply_store import ReplyError, ReplyStore
 
+from asr_corrections import correct as correct_asr_text
+from upload_limits import UploadLimitError, UploadLimiter
+
 SAMPLE_RATE = 16000
 CHANNELS = 1
 FRAMES = 160000          # 实验 012/015 的固定 10 秒上限
@@ -71,6 +75,7 @@ DEFAULT_SESSION_DIR = "work/sessions"
 DEFAULT_REPLY_DIR = "work/replies"
 DEFAULT_TTS_DIR = "work/tts"
 DEFAULT_TTS_KEY_FILE = "work/dashscope_api_key"
+DEFAULT_USAGE_FILE = "work/usage.json"
 TURN_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 CRC_RE = re.compile(r"[0-9a-fA-F]{8}")
 FORMAT_HEADERS = {
@@ -358,6 +363,11 @@ class AsrPipeline:
     def _chat(self, name, text, path, turn=None):
         if self.chat is None:
             return
+        corrected, changes = correct_asr_text(text)
+        if changes:
+            print(f"[asr] corrected file={name} rules={','.join(changes)}",
+                  flush=True)
+            text = corrected
         if not valid_user_text(text):
             print(f"[chat] skipped file={name} reason=invalid_text",
                   flush=True)
@@ -502,7 +512,7 @@ class Receiver(HTTPServer):
     daemon_threads = True
 
     def __init__(self, address, token, out_dir, max_uploads, header_timeout,
-                 asr, replies=None):
+                 asr, replies=None, limiter=None):
         super().__init__(address, Handler)
         self.token = token
         self.out_dir = pathlib.Path(out_dir)
@@ -510,6 +520,7 @@ class Receiver(HTTPServer):
         self.header_timeout = header_timeout
         self.asr = asr
         self.replies = replies
+        self.limiter = limiter
         self.uploads = 0
 
 
@@ -530,6 +541,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _log(self, text):
         print(f"[receiver] {text}", flush=True)
+
+    def _client_ip(self):
+        """Peer address, or X-Real-IP from a loopback reverse proxy."""
+        peer = self.client_address[0]
+        if peer in ("127.0.0.1", "::1"):
+            forwarded = (self.headers.get("X-Real-IP") or "").strip()
+            if forwarded:
+                try:
+                    return str(ipaddress.ip_address(forwarded))
+                except ValueError:
+                    pass
+        return peer
 
     def _reply(self, code, text):
         body = text.encode("utf-8")
@@ -566,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not hmac.compare_digest(token, self.server.token):
             self._log(f"reject invalid_token reply "
-                      f"remote={self.client_address[0]}")
+                      f"remote={self._client_ip()}")
             self._reply(403, "ERR invalid_token")
             return
         if self.server.replies is None:
@@ -624,7 +647,7 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(401, "ERR missing_token")
             return
         if not hmac.compare_digest(token, self.server.token):
-            self._log(f"reject invalid_token remote={self.client_address[0]}")
+            self._log(f"reject invalid_token remote={self._client_ip()}")
             self._reply(403, "ERR invalid_token")
             return
 
@@ -663,12 +686,27 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(400, "ERR bad_crc")
             return
 
+        # 认证和格式都通过后才计数，无效请求不消耗每日配额；被拒绝的请求
+        # 也不计数。放在读正文之前，超时/超大上传不会占用模型资源。
+        if self.server.limiter is not None:
+            try:
+                allowed, reason = self.server.limiter.allow(
+                    self._client_ip())
+            except UploadLimitError as error:
+                self._log(f"reject usage_state error={error}")
+                self._reply(503, "ERR usage_state")
+                return
+            if not allowed:
+                self._log(f"reject {reason} remote={self._client_ip()}")
+                self._reply(429, f"ERR {reason}")
+                return
+
         # Bound the body read so a stalled sender cannot hold the server open.
         self.connection.settimeout(10.0)
         try:
             data = self.rfile.read(length)
         except (socket.timeout, OSError) as error:
-            self._log(f"reject body_read remote={self.client_address[0]} "
+            self._log(f"reject body_read remote={self._client_ip()} "
                       f"error={type(error).__name__}")
             self._reply(408, "ERR body_read")
             return
@@ -689,7 +727,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.server.uploads += 1
-        self._log(f"ok remote={self.client_address[0]} bytes={length} "
+        self._log(f"ok remote={self._client_ip()} bytes={length} "
                   f"crc32={crc:08x} file={name} count={self.server.uploads}")
 
         # Enqueue before replying so --once cannot shut down between the
@@ -860,6 +898,15 @@ def main():
                         help="exit after N accepted uploads (0 = unlimited)")
     parser.add_argument("--once", action="store_true",
                         help="same as --max-uploads 1")
+    parser.add_argument("--rate-limit-per-minute", type=int, default=0,
+                        help="max accepted uploads per source IP in any 60 s "
+                             "(default: 0 = off)")
+    parser.add_argument("--daily-upload-limit", type=int, default=0,
+                        help="max accepted uploads per calendar day, kept "
+                             "across restarts (default: 0 = off)")
+    parser.add_argument("--usage-file", default=DEFAULT_USAGE_FILE,
+                        help=f"daily counter state file (default: "
+                             f"{DEFAULT_USAGE_FILE}; empty disables it)")
     parser.add_argument("--no-asr", action="store_true",
                         help="receive and save WAVs without starting recognition")
     parser.add_argument("--asr-dir", default=DEFAULT_ASR_DIR,
@@ -986,6 +1033,15 @@ def main():
     max_uploads = 1 if args.once else args.max_uploads
     token = load_token(args.token_file)
 
+    if args.daily_upload_limit and not args.usage_file:
+        parser.error("--daily-upload-limit requires --usage-file")
+    try:
+        limiter = UploadLimiter(per_minute=args.rate_limit_per_minute,
+                                daily_limit=args.daily_upload_limit,
+                                state_file=args.usage_file or None)
+    except (ValueError, UploadLimitError) as error:
+        raise SystemExit(f"cannot start upload limits: {error}")
+
     asr = None
     if not args.no_asr:
         asr = AsrPipeline(asr_config, chat, tts_config, replies)
@@ -995,14 +1051,18 @@ def main():
         chat = None
 
     server = Receiver((args.host, args.port), token, args.out_dir, max_uploads,
-                      args.header_timeout, asr, replies)
+                      args.header_timeout, asr, replies, limiter)
     print(f"[receiver] listening host={args.host} port={args.port} "
           f"out={args.out_dir} max_uploads={max_uploads or 'unlimited'} "
           f"asr={'off' if asr is None else 'on'} "
           f"queue={0 if asr is None else asr_config.queue_max} "
           f"llm={'off' if chat is None else 'on'} "
           f"tts={'off' if tts_config is None else tts_config.provider} "
-          f"replies={args.reply_dir}; trusted LAN only", flush=True)
+          f"replies={args.reply_dir} "
+          f"limits=rate:{args.rate_limit_per_minute or 'off'}/min,"
+          f"daily:{args.daily_upload_limit or 'off'} "
+          f"usage_file={args.usage_file or 'off'}; trusted LAN only",
+          flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

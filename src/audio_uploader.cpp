@@ -38,13 +38,19 @@ bool printableToken(const char* token) {
 }  // namespace
 
 void Client::begin(const char* host, uint16_t port, const char* path,
-                   const char* token) {
+                   const char* token, const char* caCert) {
   host_[0] = '\0';
   path_[0] = '\0';
   token_[0] = '\0';
   port_ = 0;
   configured_ = false;
   address_ = IPAddress();
+  https_ = caCert != nullptr && caCert[0] != '\0';
+  caCert_ = https_ ? caCert : nullptr;
+  client_ = https_ ? static_cast<WiFiClient*>(&secureClient_) : &plainClient_;
+  if (https_) {
+    secureClient_.setCACert(caCert_);
+  }
 
   if (host != nullptr) {
     std::snprintf(host_, sizeof(host_), "%s", host);
@@ -65,8 +71,9 @@ void Client::begin(const char* host, uint16_t port, const char* path,
 
   // The token itself is never printed, only whether the config is complete.
   if (configured_) {
-    Serial.printf("UPLOAD_CONFIG configured=1 host=%s port=%u path=%s\n",
-                  host_, static_cast<unsigned>(port_), path_);
+    Serial.printf(
+        "UPLOAD_CONFIG configured=1 host=%s port=%u path=%s tls=%u\n", host_,
+        static_cast<unsigned>(port_), path_, https_ ? 1U : 0U);
   } else {
     Serial.println("UPLOAD_CONFIG configured=0");
   }
@@ -120,7 +127,7 @@ Client::StartResult Client::start(const audio_record::Source& source) {
   reason_[0] = '\0';
   attempts_ = 1;
   state_ = State::Connecting;
-  client_.stop();
+  client_->stop();
   logStart();
   return StartResult::Ok;
 }
@@ -170,15 +177,51 @@ void Client::startAttempt(uint32_t now) {
     failFinal("header");
     return;
   }
-  // Bounded blocking: a LAN connect normally completes in milliseconds. The
-  // timeout keeps a missing receiver from stalling the main loop for long.
-  if (!client_.connect(address_, port_, kConnectTimeoutMs)) {
-    scheduleRetry(now, "connect");
+  // Bounded blocking: a LAN connect normally completes in milliseconds; a
+  // TLS handshake costs a few round trips. The timeout keeps a missing
+  // receiver from stalling the main loop for long.
+  const uint32_t timeout = https_ ? kTlsConnectTimeoutMs : kConnectTimeoutMs;
+  if (!client_->connect(address_, port_, timeout)) {
+    if (https_) {
+      char detail[128] = {};
+      const int code = secureClient_.lastError(detail, sizeof(detail));
+      Serial.printf("TLS_ERROR code=%d detail=%s\n", code, detail);
+    }
+    scheduleRetry(now, https_ ? "tls" : "connect");
     return;
   }
-  client_.setNoDelay(true);
+  client_->setNoDelay(true);
+  if (https_) {
+    // connect() used the handshake timeout; later writes must stay bounded.
+    secureClient_.setTimeout(kTlsWriteTimeoutMs);
+  }
   lastProgressMs_ = now;
   state_ = State::Header;
+}
+
+// Plain HTTP writes straight to the socket with MSG_DONTWAIT, because
+// Arduino-ESP32 2.0.17's Print::availableForWrite() always returns 0 for
+// WiFiClient. TLS cannot use the raw fd (the bytes would not be encrypted),
+// so it writes through WiFiClientSecure with its own bounded timeout.
+int Client::transportWrite(const uint8_t* data, size_t length) {
+  if (https_) {
+    if (!client_->connected()) {
+      errno = EPIPE;
+      return -1;
+    }
+    const size_t written = client_->write(data, length);
+    if (written == 0) {
+      errno = EAGAIN;
+      return -1;
+    }
+    return static_cast<int>(written);
+  }
+  const int fd = client_->fd();
+  if (fd < 0) {
+    errno = EBADF;
+    return -1;
+  }
+  return ::send(fd, data, length, MSG_DONTWAIT);
 }
 
 void Client::scheduleRetry(uint32_t now, const char* reason) {
@@ -252,7 +295,7 @@ void Client::evaluateResponse() {
 }
 
 void Client::closeSocket() {
-  client_.stop();
+  client_->stop();
 }
 
 void Client::cancel() {
@@ -305,7 +348,7 @@ void Client::update() {
       return;
 
     case State::Header: {
-      if (!client_.connected()) {
+      if (!client_->connected()) {
         scheduleRetry(now, "closed");
         return;
       }
@@ -314,19 +357,10 @@ void Client::update() {
         scheduleRetry(now, "stall");
         return;
       }
-      // WiFiClient in Arduino-ESP32 2.0.17 inherits Print::availableForWrite(),
-      // which always returns 0. Send directly on the socket with MSG_DONTWAIT,
-      // as web_server.cpp does, so no blocking write can stall the loop.
-      const int fd = client_.fd();
-      if (fd < 0) {
-        scheduleRetry(now, "socket");
-        return;
-      }
       size_t take = headerLength_ - headerSent_;
       if (take > kChunkBytes) take = kChunkBytes;
-      const int written = ::send(
-          fd, reinterpret_cast<const uint8_t*>(header_) + headerSent_, take,
-          MSG_DONTWAIT);
+      const int written = transportWrite(
+          reinterpret_cast<const uint8_t*>(header_) + headerSent_, take);
       if (written > 0) {
         headerSent_ += static_cast<size_t>(written);
         lastProgressMs_ = now;
@@ -340,7 +374,7 @@ void Client::update() {
     }
 
     case State::Body: {
-      if (!client_.connected()) {
+      if (!client_->connected()) {
         scheduleRetry(now, "closed");
         return;
       }
@@ -355,16 +389,10 @@ void Client::update() {
         deadlineMs_ = now + kResponseTimeoutMs;
         return;
       }
-      const int fd = client_.fd();
-      if (fd < 0) {
-        scheduleRetry(now, "socket");
-        return;
-      }
       const uint32_t remaining = total - sent_;
       size_t take = remaining < kChunkBytes ? remaining : kChunkBytes;
-      const int written = ::send(
-          fd, reinterpret_cast<const uint8_t*>(source_->data()) + sent_,
-          take, MSG_DONTWAIT);
+      const int written = transportWrite(
+          reinterpret_cast<const uint8_t*>(source_->data()) + sent_, take);
       if (written > 0) {
         sent_ += static_cast<uint32_t>(written);  // Partial writes are normal.
         lastProgressMs_ = now;
@@ -378,9 +406,9 @@ void Client::update() {
 
     case State::Reading: {
       bool received = false;
-      while (client_.available() > 0 &&
+      while (client_->available() > 0 &&
              responseLength_ + 1 < sizeof(response_)) {
-        const int value = client_.read();
+        const int value = client_->read();
         if (value < 0) break;
         response_[responseLength_++] = static_cast<char>(value);
         received = true;
@@ -393,7 +421,7 @@ void Client::update() {
         // that turn. The server sends Connection: close, so waiting for the
         // close costs no extra round trip.
       }
-      if (!client_.connected()) {
+      if (!client_->connected()) {
         evaluateResponse();
         return;
       }

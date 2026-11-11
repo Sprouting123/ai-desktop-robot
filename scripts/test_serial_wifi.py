@@ -44,7 +44,8 @@ HELP = ("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 |
         "mic level | mic probe | mic stop | mic record | mic dump | mic upload | "
         "mic upload status | mic upload cancel | voice status | voice fetch | "
         "voice fetch newest | voice play | voice stop | voice auto on | "
-        "voice auto off | wake status | wake start | wake stop; max_line=32; "
+        "voice auto off | wake status | wake start | wake stop | "
+        "wake followup <0-5>; max_line=32; "
         "endings=LF/CR/CRLF")
 TOO_LONG = "ERR line_too_long; max=32; discarded"
 INVALID = "ERR invalid_character; use ASCII commands; discarded"
@@ -141,7 +142,8 @@ WAKE_RE = re.compile(
     r"WAKE state=(running|stopped) model=(\S+) installed=([01]) "
     r"suppressed=([01]) record=(stopped|idle|arming|recording|ready) "
     r"record_samples=(\d+) record_crc32=([0-9a-f]{8}) wakes=(\d+) "
-    r"ignored=(\d+) errors=(\d+) feed_frames=(\d+) avg_feed_ms=([\d.]+) "
+    r"ignored=(\d+) errors=(\d+) listen=(\d+) followups=(\d+) "
+    r"followup_active=([01]) feed_frames=(\d+) avg_feed_ms=([\d.]+) "
     r"max_feed_ms=([\d.]+)")
 TOKEN_RE = re.compile(r'^\s*#define\s+API_TOKEN\s+"([^"]+)"', re.MULTILINE)
 # Log lines the firmware prints on its own schedule. They may land inside any
@@ -153,7 +155,8 @@ ASYNC_PREFIXES = ("WIFI_CONNECTING ", "WIFI_TIMEOUT ", "WIFI_RETRY ",
                   "VOICE_", "ERR voice_failed ", "WAKE_STAT ",
                   "WAKE_DETECTED ", "WAKE_IGNORED ", "WAKE_LISTEN ",
                   "WAKE_RECORD_", "WAKE_SPEECH_", "WAKE_SILENCE_",
-                  "WAKE_UPLOAD_")
+                  "WAKE_UPLOAD_", "WAKE_REARM ", "WAKE_CUE ",
+                  "WAKE_FOLLOWUP_", "WAKE_SESSION_", "TIME_SYNCED ")
 
 
 def load_token(path):
@@ -687,6 +690,27 @@ def main():
                ["ERR wake_usage; use help"])
         expect("wake rejects unknown subcommands", b"wake lisen\n",
                ["ERR wake_usage; use help"])
+        followup_default = send(b"wake followup\n", 0.3)
+        check("wake followup reports the default budget",
+              "OK wake_followups max=3 remaining=3 window_ms=10000"
+              in followup_default, True)
+        followup_set = send(b"wake followup 2\n", 0.3)
+        check("wake followup accepts a new limit",
+              "OK wake_followups max=2 remaining=2 window_ms=10000"
+              in followup_set, True)
+        expect("wake followup rejects an out-of-range value",
+               b"wake followup 9\n",
+               ["ERR wake_usage; use wake followup <0-5>"])
+        followup_restore = send(b"wake followup 3\n", 0.3)
+        check("wake followup raises the limit without refilling the budget",
+              "OK wake_followups max=3 remaining=2 window_ms=10000"
+              in followup_restore, True)
+        session = [line for line in send(b"wake status\n")
+                   if line.startswith("WAKE_SESSION ")]
+        check("wake status reports the follow-up session",
+              len(session) == 1 and
+              "max_followups=3 remaining=2 turn_pending=0 window_ms=10000"
+              in session[0], True)
         already = send(b"wake start\n", 0.3)
         check("wake start is idempotent while running",
               "WAKE_ALREADY running=1" in already and

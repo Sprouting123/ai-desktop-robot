@@ -52,6 +52,13 @@ class Engine : public audio_record::Source {
   void setSuppressed(bool suppressed) { suppressed_ = suppressed; }
   bool suppressed() const { return suppressed_; }
 
+  // Experiment 017 follow-up turns: after an answer, main.cpp opens a short
+  // listening window in which speech starts a new recording without the wake
+  // word. The request is accepted only while idle and not suppressed; the
+  // fetch task performs the transition. Returns false when it was not accepted.
+  bool requestFollowUp(uint32_t windowMs);
+  bool followUpActive() const { return followUpActive_; }
+
   bool running() const { return running_; }
   State state() const { return state_; }
   const char* stateName() const;
@@ -78,6 +85,10 @@ class Engine : public audio_record::Source {
   uint32_t wakeCount() const { return wakeCount_; }
   uint32_t ignoredCount() const { return ignoredCount_; }
   uint32_t errorCount() const { return micErrors_; }
+  // Increments only when a detected wake word actually armed listening (not
+  // when it was ignored). main.cpp uses it to drive the acknowledgement cue.
+  uint32_t listenCount() const { return listenCount_; }
+  uint32_t followUpCount() const { return followUpCount_; }
 
   void printStatus() const;
 
@@ -128,6 +139,11 @@ class Engine : public audio_record::Source {
   volatile bool stopRequest_ = false;
   volatile bool releaseRequest_ = false;
   volatile bool listenActive_ = false;
+  volatile bool followUpRequest_ = false;
+  volatile bool followUpActive_ = false;
+  volatile uint32_t followUpWindowUs_ = 0;
+  volatile uint32_t listenCount_ = 0;
+  volatile uint32_t followUpCount_ = 0;
   volatile uint32_t frames_ = 0;
   volatile uint32_t crc_ = 0;
   volatile uint32_t preRollPos_ = 0;

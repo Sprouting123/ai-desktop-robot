@@ -34,7 +34,7 @@ constexpr i2s_port_t kPort = I2S_NUM_1;
 
 constexpr int64_t kWakeCooldownUs = 1500LL * 1000;   // 1.5 s between detections.
 constexpr int64_t kVadIgnoreUs = 300LL * 1000;       // Ignore the wake-word tail.
-constexpr int64_t kNoSpeechUs = 5000LL * 1000;       // Give up after 5 s.
+constexpr int64_t kNoSpeechUs = 10000LL * 1000;      // Give up after 10 s.
 constexpr int64_t kSilenceHangoverUs = 800LL * 1000; // 800 ms trailing silence.
 constexpr int64_t kReportPeriodUs = 10LL * 1000 * 1000;
 
@@ -201,6 +201,9 @@ bool Engine::start() {
   startRequest_ = false;
   stopRequest_ = false;
   releaseRequest_ = false;
+  followUpRequest_ = false;
+  followUpActive_ = false;
+  followUpWindowUs_ = 0;
   suppressed_ = false;
 
   if (!installI2s()) return false;
@@ -331,6 +334,8 @@ void Engine::stop() {
   startRequest_ = false;
   stopRequest_ = false;
   releaseRequest_ = false;
+  followUpRequest_ = false;
+  followUpActive_ = false;
   running_ = false;
   state_ = State::kStopped;
   suppressed_ = false;
@@ -384,6 +389,7 @@ void Engine::appendSamples(const int16_t* samples, uint32_t count) {
 }
 
 void Engine::finalize(const char* reason) {
+  followUpActive_ = false;
   const uint32_t samples = frames_;
   const uint32_t crc = ~crc_;
   crc_ = crc;
@@ -411,12 +417,24 @@ void Engine::requestStart() {
   if (state_ == State::kArming) startRequest_ = true;
 }
 
+bool Engine::requestFollowUp(uint32_t windowMs) {
+  if (!running_ || windowMs == 0) return false;
+  if (suppressed_) return false;
+  // Only the idle state can open a window. The fetch task re-checks this before
+  // it transitions, so a race here ends in a logged skip, never a spurious one.
+  if (state_ != State::kIdle) return false;
+  followUpWindowUs_ = windowMs * 1000UL;
+  followUpRequest_ = true;
+  return true;
+}
+
 void Engine::requestStop() {
   if (state_ == State::kRecording) stopRequest_ = true;
 }
 
 void Engine::abortRecording(const char* reason) {
   if (state_ != State::kArming && state_ != State::kRecording) return;
+  followUpActive_ = false;
   __sync_synchronize();
   state_ = State::kIdle;
   Serial.printf("WAKE_RECORD_ABORT reason=%s samples=%lu\n", reason,
@@ -508,6 +526,27 @@ void Engine::fetchLoop() {
     if (fetchStop_) break;
     const int64_t now = esp_timer_get_time();
 
+    // Experiment 017: main.cpp asks for a wake-word-free follow-up window once
+    // an answer has finished playing, so the next question can follow on
+    // directly. The request is refused while suppressed or busy.
+    if (followUpRequest_) {
+      followUpRequest_ = false;
+      if (suppressed_) {
+        Serial.println("WAKE_FOLLOWUP_SKIP reason=half_duplex");
+      } else if (state_ != State::kIdle) {
+        Serial.printf("WAKE_FOLLOWUP_SKIP reason=record_%s\n", stateName());
+      } else {
+        state_ = State::kArming;
+        followUpActive_ = true;
+        armedUs_ = now;
+        lastSpeechUs_ = now;
+        listening = true;
+        ++followUpCount_;
+        Serial.printf("WAKE_FOLLOWUP_LISTEN window_ms=%lu\n",
+                      static_cast<unsigned long>(followUpWindowUs_ / 1000));
+      }
+    }
+
     if (result == nullptr) {
       ++fetchNulls_;
     } else if (result->wakeup_state == WAKENET_DETECTED) {
@@ -524,17 +563,31 @@ void Engine::fetchLoop() {
         if (suppressed_) {
           ++ignoredCount_;
           Serial.println("WAKE_IGNORED reason=half_duplex");
-        } else if (state_ != State::kIdle) {
-          ++ignoredCount_;
-          Serial.printf("WAKE_IGNORED reason=record_%s\n", stateName());
-        } else {
+        } else if (state_ == State::kIdle) {
           state_ = State::kArming;
+          followUpActive_ = false;
           armedUs_ = now;
           lastSpeechUs_ = now;
           listening = true;
+          ++listenCount_;
           Serial.printf("WAKE_LISTEN ignore_ms=%lld no_speech_ms=%lld\n",
                         static_cast<long long>(kVadIgnoreUs / 1000),
                         static_cast<long long>(kNoSpeechUs / 1000));
+        } else if (state_ == State::kArming) {
+          // Repeating the wake word while already listening restarts the
+          // window instead of being ignored; main.cpp repeats the cue.
+          armedUs_ = now;
+          lastSpeechUs_ = now;
+          listening = true;
+          ++listenCount_;
+          Serial.printf("WAKE_REARM window_ms=%lld followup=%u\n",
+                        static_cast<long long>(
+                            (followUpActive_ ? followUpWindowUs_ : kNoSpeechUs) /
+                            1000),
+                        followUpActive_ ? 1U : 0U);
+        } else {
+          ++ignoredCount_;
+          Serial.printf("WAKE_IGNORED reason=record_%s\n", stateName());
         }
       }
     }
@@ -544,14 +597,24 @@ void Engine::fetchLoop() {
     if (result != nullptr && listening) {
       const bool speech = result->vad_state == AFE_VAD_SPEECH;
       if (state_ == State::kArming) {
+        const int64_t windowUs =
+            followUpActive_ ? static_cast<int64_t>(followUpWindowUs_)
+                            : kNoSpeechUs;
         if (now - armedUs_ >= kVadIgnoreUs && speech) {
           lastSpeechUs_ = now;
+          const bool followUp = followUpActive_;
+          followUpActive_ = false;
           requestStart();
-          Serial.printf("WAKE_SPEECH_START after_ms=%lld\n",
-                        static_cast<long long>((now - armedUs_) / 1000));
-        } else if (now - armedUs_ >= kNoSpeechUs) {
+          Serial.printf("WAKE_SPEECH_START after_ms=%lld followup=%u\n",
+                        static_cast<long long>((now - armedUs_) / 1000),
+                        followUp ? 1U : 0U);
+        } else if (now - armedUs_ >= windowUs) {
+          const bool followUp = followUpActive_;
           abortRecording("no_speech");
           listening = false;
+          if (followUp) {
+            Serial.println("WAKE_FOLLOWUP_END reason=timeout");
+          }
         }
       } else if (state_ == State::kRecording) {
         if (speech) {
@@ -607,6 +670,7 @@ void Engine::printStatus() const {
   Serial.printf(
       "WAKE state=%s model=%s installed=%u suppressed=%u record=%s "
       "record_samples=%lu record_crc32=%08lx wakes=%lu ignored=%lu errors=%lu "
+      "listen=%lu followups=%lu followup_active=%u "
       "feed_frames=%lu avg_feed_ms=%.2f max_feed_ms=%.2f\n",
       running_ ? "running" : "stopped",
       wnName_ == nullptr ? "nihaoxiaozhi" : wnName_,
@@ -616,6 +680,9 @@ void Engine::printStatus() const {
       static_cast<unsigned long>(wakeCount_),
       static_cast<unsigned long>(ignoredCount_),
       static_cast<unsigned long>(micErrors_),
+      static_cast<unsigned long>(listenCount_),
+      static_cast<unsigned long>(followUpCount_),
+      followUpActive_ ? 1U : 0U,
       static_cast<unsigned long>(feedFrames_), static_cast<double>(avgMs),
       static_cast<double>(feedMaxUs_) / 1000.0);
 }

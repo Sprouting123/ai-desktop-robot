@@ -93,12 +93,19 @@ Client::~Client() {
   }
 }
 
-void Client::begin(const char* host, uint16_t port, const char* token) {
+void Client::begin(const char* host, uint16_t port, const char* token,
+                   const char* caCert) {
   host_[0] = '\0';
   token_[0] = '\0';
   port_ = 0;
   configured_ = false;
   address_ = IPAddress();
+  https_ = caCert != nullptr && caCert[0] != '\0';
+  caCert_ = https_ ? caCert : nullptr;
+  client_ = https_ ? static_cast<WiFiClient*>(&secureClient_) : &plainClient_;
+  if (https_) {
+    secureClient_.setCACert(caCert_);
+  }
 
   if (host != nullptr) {
     std::snprintf(host_, sizeof(host_), "%s", host);
@@ -116,8 +123,8 @@ void Client::begin(const char* host, uint16_t port, const char* token) {
   // The token itself is never printed, only whether the config is complete.
   if (configured_) {
     Serial.printf(
-        "VOICE_CONFIG configured=1 host=%s port=%u path=/reply/latest\n",
-        host_, static_cast<unsigned>(port_));
+        "VOICE_CONFIG configured=1 host=%s port=%u path=/reply/latest tls=%u\n",
+        host_, static_cast<unsigned>(port_), https_ ? 1U : 0U);
   } else {
     Serial.println("VOICE_CONFIG configured=0");
   }
@@ -204,7 +211,7 @@ Client::StartResult Client::start(const char* turn, bool polling,
     return StartResult::Ok;
   }
   const uint32_t now = millis();
-  client_.stop();
+  client_->stop();
   state_ = State::Connecting;
   if (polling_) {
     pollDeadlineMs_ = now + kPollTimeoutMs;
@@ -236,15 +243,48 @@ void Client::startAttempt(uint32_t now) {
   headerLength_ = 0;
   header_[0] = '\0';
   // Bounded blocking connect, same trade-off as the uploader: a missing
-  // receiver delays one loop by at most one second.
-  if (!client_.connect(address_, port_, kConnectTimeoutMs)) {
-    fail("connect");
+  // receiver delays one loop by at most the connect timeout; TLS costs more.
+  const uint32_t timeout = https_ ? kTlsConnectTimeoutMs : kConnectTimeoutMs;
+  if (!client_->connect(address_, port_, timeout)) {
+    if (https_) {
+      char detail[128] = {};
+      const int code = secureClient_.lastError(detail, sizeof(detail));
+      Serial.printf("TLS_ERROR code=%d detail=%s\n", code, detail);
+    }
+    fail(https_ ? "tls" : "connect");
     return;
   }
-  client_.setNoDelay(true);
+  client_->setNoDelay(true);
+  if (https_) {
+    secureClient_.setTimeout(kTlsWriteTimeoutMs);
+  }
   lastProgressMs_ = now;
   attemptDeadlineMs_ = now + kAttemptTimeoutMs;
   state_ = State::Sending;
+}
+
+// Plain HTTP writes on the raw socket with MSG_DONTWAIT (the 2.0.17
+// availableForWrite() is always 0); TLS must go through WiFiClientSecure or
+// the request would not be encrypted.
+int Client::transportWrite(const uint8_t* data, size_t length) {
+  if (https_) {
+    if (!client_->connected()) {
+      errno = EPIPE;
+      return -1;
+    }
+    const size_t written = client_->write(data, length);
+    if (written == 0) {
+      errno = EAGAIN;
+      return -1;
+    }
+    return static_cast<int>(written);
+  }
+  const int fd = client_->fd();
+  if (fd < 0) {
+    errno = EBADF;
+    return -1;
+  }
+  return ::send(fd, data, length, MSG_DONTWAIT);
 }
 
 void Client::pollAgain(uint32_t now) {
@@ -267,7 +307,7 @@ void Client::freePending() {
 }
 
 void Client::closeSocket() {
-  client_.stop();
+  client_->stop();
 }
 
 void Client::fail(const char* reason) {
@@ -310,8 +350,8 @@ bool Client::play() {
 }
 
 void Client::readHeader(uint32_t now) {
-  while (client_.available() > 0 && headerLength_ < kMaxHeaderBytes) {
-    const int value = client_.read();
+  while (client_->available() > 0 && headerLength_ < kMaxHeaderBytes) {
+    const int value = client_->read();
     if (value < 0) break;
     header_[headerLength_++] = static_cast<char>(value);
     header_[headerLength_] = '\0';
@@ -325,7 +365,7 @@ void Client::readHeader(uint32_t now) {
     fail("header_large");
     return;
   }
-  if (!client_.connected()) {
+  if (!client_->connected()) {
     fail(headerLength_ == 0 ? "closed" : "short_header");
     return;
   }
@@ -406,16 +446,16 @@ void Client::parseHeader(uint32_t now) {
 }
 
 void Client::readBody(uint32_t now) {
-  if (client_.available() > 0 && receivedBytes_ < expectedBytes_) {
+  if (client_->available() > 0 && receivedBytes_ < expectedBytes_) {
     size_t take = static_cast<size_t>(
-        client_.available() > static_cast<int>(kReadChunkBytes)
+        client_->available() > static_cast<int>(kReadChunkBytes)
             ? kReadChunkBytes
-            : client_.available());
+            : client_->available());
     if (take > expectedBytes_ - receivedBytes_) {
       take = expectedBytes_ - receivedBytes_;
     }
     const int read =
-        client_.read(pending_ + receivedBytes_, take);
+        client_->read(pending_ + receivedBytes_, take);
     if (read > 0) {
       receivedBytes_ += static_cast<uint32_t>(read);
       lastProgressMs_ = now;
@@ -426,7 +466,7 @@ void Client::readBody(uint32_t now) {
     commit(now);
     return;
   }
-  if (!client_.connected()) {
+  if (!client_->connected()) {
     fail(receivedBytes_ == 0 ? "closed" : "short_body");
     return;
   }
@@ -519,7 +559,7 @@ void Client::update() {
       return;
 
     case State::Sending: {
-      if (!client_.connected()) {
+      if (!client_->connected()) {
         fail("closed");
         return;
       }
@@ -528,15 +568,9 @@ void Client::update() {
         fail("stall");
         return;
       }
-      const int fd = client_.fd();
-      if (fd < 0) {
-        fail("socket");
-        return;
-      }
       const size_t take = requestLength_ - requestSent_;
-      const int written = ::send(
-          fd, reinterpret_cast<const uint8_t*>(request_) + requestSent_, take,
-          MSG_DONTWAIT);
+      const int written = transportWrite(
+          reinterpret_cast<const uint8_t*>(request_) + requestSent_, take);
       if (written > 0) {
         requestSent_ += static_cast<size_t>(written);
         lastProgressMs_ = now;

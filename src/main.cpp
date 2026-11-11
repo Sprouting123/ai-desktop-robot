@@ -5,6 +5,7 @@
 #include <esp32s3/spiram.h>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 #include "audio_engine.h"
 #include "audio_uploader.h"
@@ -46,6 +47,11 @@
 #endif
 #ifndef AUDIO_UPLOAD_TOKEN
 #define AUDIO_UPLOAD_TOKEN ""
+#endif
+// Empty keeps plain HTTP (trusted LAN). A non-empty PEM CA certificate enables
+// HTTPS to AUDIO_UPLOAD_HOST with certificate verification.
+#ifndef AUDIO_UPLOAD_CA_CERT
+#define AUDIO_UPLOAD_CA_CERT ""
 #endif
 
 #ifndef RGB_LED_PIN
@@ -137,7 +143,7 @@ void printHardware() {
 }
 
 void printHelp() {
-  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel | voice status | voice fetch | voice fetch newest | voice play | voice stop | voice auto on | voice auto off | wake status | wake start | wake stop; max_line=32; endings=LF/CR/CRLF");
+  Serial.println("HELP red | green | blue | off | status | help | i2cscan | oled_sh1106 | oled_ssd1306 | oled_status | eyes <normal|happy|angry|sad|embarrassed|sympathy|comfort|melancholy|left|right> | eyes blink | eyes status | eyes dump | servo <60-120> | servo center | servo status | servo stop | servo1 <60-120> | servo1 center | servo1 status | servo1 stop | servo2 <60-120> | servo2 center | servo2 status | servo2 stop | servo both center | servo both stop | motion neutral | motion wiggle | motion together | motion alternate | motion stop | motion status | mood happy | mood sad | mood angry | mood normal | mood status | mood stop | wifi status | wifi reconnect | web status | audio beep | audio hello | audio stop | audio status | mic status | mic start | mic level | mic probe | mic stop | mic record | mic dump | mic upload | mic upload status | mic upload cancel | voice status | voice fetch | voice fetch newest | voice play | voice stop | voice auto on | voice auto off | wake status | wake start | wake stop | wake followup <0-5>; max_line=32; endings=LF/CR/CRLF");
 }
 
 void printStatus() {
@@ -155,6 +161,19 @@ void applyColor(const Color& color) {
   Serial.printf("OK state=%s pin=%d\n", color.name, RGB_LED_PIN);
 #else
   Serial.println("ERR led_disabled; select rgb_gpio48 for this board");
+#endif
+}
+
+// Experiment 017 wake cue: drive the same pixel without the `OK state=` line.
+// The cue is visual only; a beep would land in the uploaded recording and be
+// transcribed as speech.
+void showRgbRaw(const Color& color) {
+#if RGB_LED_PIN >= 0
+  led.setPixelColor(0, led.Color(color.red, color.green, color.blue));
+  led.show();
+  currentColor = &color;
+#else
+  (void)color;
 #endif
 }
 
@@ -583,6 +602,26 @@ uint32_t wakeCooldownUntilMs = 0;
 bool wakeUploadPending = false;
 bool wakeWaitLogged = false;
 
+// Experiment 017 UX. The wake word now gets an immediate visual cue, and after
+// an answer the robot reopens a short listening window (no wake word) so the
+// user can keep talking. Each session starts at the wake word and is limited to
+// kWakeMaxFollowUps follow-up turns to bound recordings and paid API use.
+constexpr uint32_t kWakeCueMs = 250;
+constexpr uint32_t kWakeFollowUpWindowMs = 10000;
+constexpr uint32_t kWakeFollowUpSettleMs = 1500;
+constexpr uint32_t kWakeFollowUpGiveUpMs = 5000;
+constexpr uint8_t kWakeMaxFollowUpsDefault = 3;
+
+uint8_t wakeMaxFollowUps = kWakeMaxFollowUpsDefault;
+uint8_t wakeFollowUpBudget = kWakeMaxFollowUpsDefault;
+uint32_t handledListenCount = 0;
+uint32_t handledFollowUpCount = 0;
+uint32_t wakeCueUntilMs = 0;
+const Color* wakeCuePrevious = nullptr;
+bool wakeTurnPending = false;
+uint32_t wakeTurnStartedMs = 0;
+uint32_t wakeFollowUpTryMs = 0;
+
 const char* uploadResultName(upload::Client::StartResult result) {
   switch (result) {
     case upload::Client::StartResult::Ok: return "ok";
@@ -601,6 +640,94 @@ void resetWakeDialogState() {
   wakeCooldownUntilMs = 0;
   wakeUploadPending = false;
   wakeWaitLogged = false;
+  handledListenCount = wakeEngine.listenCount();
+  handledFollowUpCount = wakeEngine.followUpCount();
+  wakeCueUntilMs = 0;
+  wakeCuePrevious = nullptr;
+  wakeTurnPending = false;
+  wakeTurnStartedMs = 0;
+  wakeFollowUpTryMs = 0;
+  wakeFollowUpBudget = wakeMaxFollowUps;
+}
+
+bool wakeDialogBusy() {
+  return audioUploader.active() || wakeUploadPending || voiceClient.active() ||
+         voiceClient.playing() || audioEngine.playing();
+}
+
+// Immediate acknowledgement: blue flash plus one blink. It is visual on purpose
+// because any sound would be captured by the microphone and uploaded.
+void updateWakeCue() {
+  if (!wakeEngine.running()) return;
+  const uint32_t listens = wakeEngine.listenCount();
+  const uint32_t followUps = wakeEngine.followUpCount();
+  bool fire = false;
+  const char* kind = "";
+  if (listens != handledListenCount) {
+    handledListenCount = listens;
+    // A wake word opens a new session with a fresh follow-up budget. Any
+    // follow-up that was still queued belongs to the previous session.
+    wakeFollowUpBudget = wakeMaxFollowUps;
+    wakeTurnPending = false;
+    wakeFollowUpTryMs = 0;
+    fire = true;
+    kind = "wake";
+  } else if (followUps != handledFollowUpCount) {
+    handledFollowUpCount = followUps;
+    fire = true;
+    kind = "followup";
+  }
+  if (fire) {
+    if (wakeCueUntilMs == 0) wakeCuePrevious = currentColor;
+    showRgbRaw(kColors[2]);  // blue
+    wakeCueUntilMs = millis() + kWakeCueMs;
+    const bool blinked = eyesEngine.blink();
+    Serial.printf("WAKE_CUE kind=%s listens=%lu followups=%lu blink=%u "
+                  "followups_left=%u\n",
+                  kind, static_cast<unsigned long>(listens),
+                  static_cast<unsigned long>(followUps), blinked ? 1U : 0U,
+                  static_cast<unsigned>(wakeFollowUpBudget));
+  }
+  if (wakeCueUntilMs != 0 &&
+      static_cast<int32_t>(millis() - wakeCueUntilMs) >= 0) {
+    wakeCueUntilMs = 0;
+    // Only undo the flash if no other command changed the pixel meanwhile.
+    if (wakeCuePrevious != nullptr && currentColor == &kColors[2]) {
+      showRgbRaw(*wakeCuePrevious);
+    }
+    wakeCuePrevious = nullptr;
+  }
+}
+
+// After an answered turn the robot listens again for a follow-up question. It
+// waits for the answer playback and the half-duplex cooldown to finish, then
+// asks the wake engine to arm without the wake word. Budget is consumed when
+// the window actually opens, so a failed upload cannot extend a session.
+void updateWakeFollowUp() {
+  if (!wakeEngine.running() || !wakeTurnPending) return;
+  if (wakeFollowUpBudget == 0) {
+    wakeTurnPending = false;
+    wakeFollowUpTryMs = 0;
+    Serial.println("WAKE_SESSION_END reason=max_followups");
+    return;
+  }
+  const uint32_t now = millis();
+  if (now - wakeTurnStartedMs < kWakeFollowUpSettleMs) return;
+  if (wakeDialogBusy() || wakeEngine.suppressed()) return;
+
+  if (wakeFollowUpTryMs == 0) wakeFollowUpTryMs = now == 0 ? 1 : now;
+  if (wakeEngine.requestFollowUp(kWakeFollowUpWindowMs)) {
+    --wakeFollowUpBudget;
+    wakeTurnPending = false;
+    wakeFollowUpTryMs = 0;
+    Serial.printf("WAKE_FOLLOWUP_OPEN window_ms=%lu remaining=%u\n",
+                  static_cast<unsigned long>(kWakeFollowUpWindowMs),
+                  static_cast<unsigned>(wakeFollowUpBudget));
+  } else if (now - wakeFollowUpTryMs >= kWakeFollowUpGiveUpMs) {
+    wakeTurnPending = false;
+    wakeFollowUpTryMs = 0;
+    Serial.println("WAKE_FOLLOWUP_SKIP reason=engine_busy");
+  }
 }
 
 bool startWakeEngine() {
@@ -656,6 +783,17 @@ void updateWakeDialog() {
     wakeReadyAtMs = 0;
     wakeWaitLogged = false;
     wakeCooldownUntilMs = millis() + 800;
+    if (done && turn[0] != '\0') {
+      // The answer (if any) is fetched and played by voice auto. Follow-up
+      // listening opens once upload, download and playback have all settled.
+      wakeTurnPending = true;
+      wakeTurnStartedMs = millis();
+      wakeFollowUpTryMs = 0;
+    } else {
+      wakeTurnPending = false;
+      wakeFollowUpTryMs = 0;
+      Serial.println("WAKE_SESSION_END reason=no_turn");
+    }
   }
 
   if (wakeEngine.readyCount() == handledWakeReady) return;
@@ -697,9 +835,7 @@ void updateWakeDialog() {
 }
 
 void updateWakeSuppression() {
-  const bool busy = audioUploader.active() || wakeUploadPending ||
-                    voiceClient.active() || voiceClient.playing() ||
-                    audioEngine.playing();
+  const bool busy = wakeDialogBusy();
   const uint32_t now = millis();
   if (busy) wakeCooldownUntilMs = now + 1200;
   const bool cooldown =
@@ -714,6 +850,35 @@ void executeWake(char* args) {
   }
   if (std::strcmp(args, "status") == 0) {
     wakeEngine.printStatus();
+    Serial.printf("WAKE_SESSION max_followups=%u remaining=%u turn_pending=%u "
+                  "window_ms=%lu\n",
+                  static_cast<unsigned>(wakeMaxFollowUps),
+                  static_cast<unsigned>(wakeFollowUpBudget),
+                  wakeTurnPending ? 1U : 0U,
+                  static_cast<unsigned long>(kWakeFollowUpWindowMs));
+    return;
+  }
+  if (std::strncmp(args, "followup", 8) == 0 &&
+      (args[8] == '\0' || args[8] == ' ' || args[8] == '\t')) {
+    char* value = args + 8;
+    while (*value == ' ' || *value == '\t') ++value;
+    if (*value != '\0') {
+      unsigned parsed = 0;
+      bool valid = value[1] == '\0' && value[0] >= '0' && value[0] <= '5';
+      if (valid) parsed = static_cast<unsigned>(value[0] - '0');
+      if (!valid) {
+        Serial.println("ERR wake_usage; use wake followup <0-5>");
+        return;
+      }
+      wakeMaxFollowUps = static_cast<uint8_t>(parsed);
+      if (wakeFollowUpBudget > wakeMaxFollowUps) {
+        wakeFollowUpBudget = wakeMaxFollowUps;
+      }
+    }
+    Serial.printf("OK wake_followups max=%u remaining=%u window_ms=%lu\n",
+                  static_cast<unsigned>(wakeMaxFollowUps),
+                  static_cast<unsigned>(wakeFollowUpBudget),
+                  static_cast<unsigned long>(kWakeFollowUpWindowMs));
     return;
   }
   if (std::strcmp(args, "start") == 0) {
@@ -1151,11 +1316,12 @@ void setup() {
   // Copy and validate the optional receiver settings. Nothing connects and no
   // audio moves until an explicit `mic upload`; the token is never logged.
   audioUploader.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_PATH,
-                      AUDIO_UPLOAD_TOKEN);
+                      AUDIO_UPLOAD_TOKEN, AUDIO_UPLOAD_CA_CERT);
   // The reply download reuses the receiver host, port and token; only the
   // path differs (/reply/latest). Auto playback is on, but it starts only
   // after an explicit upload succeeds.
-  voiceClient.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_TOKEN);
+  voiceClient.begin(AUDIO_UPLOAD_HOST, AUDIO_UPLOAD_PORT, AUDIO_UPLOAD_TOKEN,
+                    AUDIO_UPLOAD_CA_CERT);
   printStatus();
   printHelp();
   showEyes(eyes::Expression::Normal, false, nullptr);
@@ -1170,8 +1336,32 @@ void setup() {
   // is missing, the engine reports the reason and every other subsystem keeps
   // working; `wake start` can retry later.
   Serial.println("WAKE_AUTO_START model=nihaoxiaozhi half_duplex=1");
+  resetWakeDialogState();
   if (!wakeEngine.start()) {
     Serial.println("WAKE_START_FAILED reason=auto; local functions continue");
+  }
+}
+
+// HTTPS verifies the server certificate, so the clock must be real: without
+// SNTP the ESP32 starts at 1970 and every certificate looks "not yet valid".
+// Only started when a pinned CA is configured; plain-HTTP LAN tests stay
+// unchanged. configTime() is asynchronous and retries in the background.
+static bool timeSyncStarted = false;
+static bool timeSynced = false;
+
+void updateClock() {
+  if (AUDIO_UPLOAD_CA_CERT[0] == '\0' || !wifiManager.connected()) return;
+  if (!timeSyncStarted) {
+    configTime(0, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "pool.ntp.org");
+    timeSyncStarted = true;
+    Serial.println("TIME_SNTP_START servers=ntp.aliyun.com,ntp.ntsc.ac.cn,pool.ntp.org");
+  }
+  if (!timeSynced) {
+    const std::time_t now = std::time(nullptr);
+    if (now > 1700000000) {
+      timeSynced = true;
+      Serial.printf("TIME_SYNCED epoch=%ld\n", static_cast<long>(now));
+    }
   }
 }
 
@@ -1185,6 +1375,7 @@ void loop() {
   // Networking is advanced in small steps. It never waits for a connection or
   // a whole HTTP request, so the OLED and servo schedules below keep running.
   wifiManager.update();
+  updateClock();
   webServer.update();
   // One small upload step per loop: no wait for the socket, and the completed
   // PSRAM recording is read in place.
@@ -1198,6 +1389,11 @@ void loop() {
   // Half duplex: no new wake word while uploading, downloading, playing, or
   // during the short echo cooldown after playback.
   updateWakeSuppression();
+  // Experiment 017 UX: acknowledge the wake word immediately with a blue flash
+  // and a blink, and after an answered turn reopen a short wake-word-free
+  // window so the user can continue the conversation.
+  updateWakeCue();
+  updateWakeFollowUp();
   // Audio streams one small chunk per loop and never waits for the DMA queue.
   audioEngine.update();
   // One non-blocking RX read per loop; capture only runs after `mic start`.

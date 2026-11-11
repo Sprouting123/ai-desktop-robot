@@ -30,8 +30,10 @@ class Client {
   ~Client();
 
   // Copies and validates the receiver settings. The token is kept in RAM only
-  // and is never logged.
-  void begin(const char* host, uint16_t port, const char* token);
+  // and is never logged. A non-empty caCert enables HTTPS with verification
+  // against that pinned CA; an empty/NULL caCert keeps plain HTTP.
+  void begin(const char* host, uint16_t port, const char* token,
+             const char* caCert = nullptr);
 
   // Manual download. Uses the turn reported by the last upload when available,
   // so a reply to an older recording cannot be mistaken for the new answer.
@@ -70,6 +72,8 @@ class Client {
   };
 
   static constexpr uint32_t kConnectTimeoutMs = 1000;
+  static constexpr uint32_t kTlsConnectTimeoutMs = 4000;
+  static constexpr uint32_t kTlsWriteTimeoutMs = 1000;
   static constexpr uint32_t kStallTimeoutMs = 5000;
   static constexpr uint32_t kAttemptTimeoutMs = 15000;
   static constexpr uint32_t kPollIntervalMs = 700;
@@ -90,6 +94,7 @@ class Client {
   void closeSocket();
   void freePending();
   void pollAgain(uint32_t now);
+  int transportWrite(const uint8_t* data, size_t length);
 
   audio::Engine& audio_;
   const upload::Client& uploader_;
@@ -99,11 +104,15 @@ class Client {
   uint16_t port_ = 0;
   IPAddress address_;
   bool configured_ = false;
+  bool https_ = false;
   bool auto_ = true;
   uint32_t seenUploads_ = 0;
 
   State state_ = State::Idle;
-  WiFiClient client_;
+  WiFiClient plainClient_;
+  WiFiClientSecure secureClient_;
+  WiFiClient* client_ = &plainClient_;
+  const char* caCert_ = nullptr;
   char request_[320] = {};
   size_t requestLength_ = 0;
   size_t requestSent_ = 0;
